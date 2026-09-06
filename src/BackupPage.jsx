@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import JSZip from 'jszip';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { translations } from './translations';
 import { TurboFactory } from '@ardrive/turbo-sdk/web';
 import { InjectedEthereumSigner } from '@dha-team/arbundles';
@@ -20,9 +21,11 @@ function icon(name) {
 }
 
 function BackupPage() {
+    const [searchParams] = useSearchParams();
+    const navigate = useNavigate();
     const [config, setConfig] = useState(null);
     const [currentLanguage, setCurrentLanguage] = useState(localStorage.getItem('permrepo-language') || 'lv');
-    const [repoName, setRepoName] = useState(null);
+    const [repoName, setRepoName] = useState(searchParams.get('repo'));
     const [tokenId, setTokenId] = useState(null);
     const [githubUser, setGithubUser] = useState(null);
     const [userAddress, setUserAddress] = useState(null);
@@ -187,13 +190,10 @@ function BackupPage() {
                 const configData = await apiJson('/api/config');
                 setConfig(configData);
                 
-                const params = new URLSearchParams(window.location.search);
-                const repo = params.get('repo');
-                if (!repo) {
+                if (!repoName) {
                     setError('Nav repo nosaukuma URL parametrā!');
                     return;
                 }
-                setRepoName(repo);
                 
                 try {
                     const userData = await apiJson('/api/github/user');
@@ -234,7 +234,7 @@ function BackupPage() {
                     setTurboClient(client);
                     
                     const nftContract = new ethers.Contract(configData.nftAddress, NFT_ABI, provider);
-                    const fullRepoName = `${userData.user}/${repo}`;
+                    const fullRepoName = `${userData.user}/${repoName}`;
                     const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
                     const tokenIdResult = await nftContract.repositoryTokens(repoHash);
                     if (tokenIdResult === 0n) {
@@ -498,7 +498,7 @@ function BackupPage() {
                 </button>
             ) : (
                 <button 
-                    onClick={() => window.location.href = '/'}
+                    onClick={() => navigate('/')}
                     className="sign-button"
                     style={{ marginTop: '20px' }}
                 >
