@@ -223,17 +223,17 @@ function BackupPage() {
                 setSigner(signerInstance);
                 setUserAddress(address);
                 
-                // Inicializē Turbo
+                // Turbo klients ar ENV mainīgajiem
                 const client = TurboFactory.authenticated({
                     signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
                     token: 'base-eth',
-                    gatewayUrl: 'https://sepolia.base.org',
-                    uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
-                    paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
+                    gatewayUrl: configData.rpcUrl || 'https://sepolia.base.org',
+                    uploadServiceConfig: { url: configData.turboUploadUrl || 'https://upload.services.ar-io.dev' },
+                    paymentServiceConfig: { url: configData.turboPaymentUrl || 'https://payment.services.ar-io.dev' }
                 });
                 setTurboClient(client);
                 
-                // Ielādē NFT info
+                // NFT info
                 const nftContract = new ethers.Contract(configData.nftAddress, NFT_ABI, provider);
                 const fullRepoName = `${userData.user}/${repo}`;
                 const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
@@ -291,7 +291,6 @@ function BackupPage() {
             const sizeText = formatFileSize(result.totalBytes || 0);
             setStatus(`📄 ${t('files-count')}: ${result.files.length}\n📄 ${t('files-size')}: ${sizeText}`);
             
-            // Sāk ZIP augšupielādi
             await uploadZip(result.jobId, result.files);
             
         } catch (e) {
@@ -304,7 +303,6 @@ function BackupPage() {
         setStatus(`⏳ ${t('creating-zip')}`);
         
         try {
-            // Master Key
             const backupCount = Number(nftInfo.backupCount || 0);
             let masterKey;
             if (backupCount === 0) {
@@ -321,7 +319,6 @@ function BackupPage() {
                 return;
             }
             
-            // ZIP izveide
             const zip = new JSZip();
             for (const file of files) {
                 const binaryString = atob(file.content);
@@ -331,7 +328,6 @@ function BackupPage() {
             }
             const zipBuffer = await zip.generateAsync({ type: 'uint8array' });
             
-            // Šifrēšana
             setStatus(`⏳ ${t('encrypting')}`);
             const encrypted = await encryptData(zipBuffer, masterKey);
             const encryptedZipData = encrypted.encrypted;
@@ -339,7 +335,6 @@ function BackupPage() {
             const merkleRoot = calculateMerkleRoot(files);
             const fileMetadata = files.map(file => ({ path: file.path, hash: file.hash }));
             
-            // Turbo augšupielāde
             setStatus(`⏳ ${t('uploading')}`);
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             const zipResult = await turboClient.uploadFile({
@@ -359,14 +354,12 @@ function BackupPage() {
             
             const zipTxId = zipResult.id;
             
-            // Saglabā ZIP TX ID
             await apiJson('/api/save-zip-tx', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jobId, zipTxId })
             });
             
-            // Manifests
             setStatus(`⏳ ${t('manifest-ready')}`);
             const manifest = {
                 manifest: 'arweave/paths',
@@ -396,14 +389,12 @@ function BackupPage() {
             
             const manifestTxId = manifestResult.id;
             
-            // Saglabā manifest TX ID
             await apiJson('/api/save-manifest-tx', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jobId, manifestTxId, manifest })
             });
             
-            // NFT līguma izsaukums
             setStatus(`⏳ ${t('signing')}`);
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
