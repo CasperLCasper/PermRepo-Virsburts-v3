@@ -1,4 +1,4 @@
-// server.js - Express API, bez privātās atslēgas, ar TURBO_URL env
+// server.js - Express API, bez privātās atslēgas, ar ENV mainīgajiem
 
 import express from 'express';
 import path from 'path';
@@ -27,20 +27,26 @@ app.set('trust proxy', 1);
 
 const PORT = process.env.PORT || 3000;
 
-const ARWEAVE_GATEWAY = process.env.ARWEAVE_GATEWAY || 'https://ar-io.dev';
-const CHAIN_ID = process.env.CHAIN_ID || '0x14a34';
+const ARWEAVE_GATEWAY = process.env.ARWEAVE_GATEWAY;
+const CHAIN_ID = process.env.CHAIN_ID;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const GITHUB_REDIRECT_URI = process.env.GITHUB_REDIRECT_URI;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
-const TURBO_UPLOAD_URL = process.env.TURBO_UPLOAD_URL || 'https://upload.services.ar-io.dev';
-const TURBO_PAYMENT_URL = process.env.TURBO_PAYMENT_URL || 'https://payment.services.ar-io.dev';
+const TURBO_UPLOAD_URL = process.env.TURBO_UPLOAD_URL;
+const TURBO_PAYMENT_URL = process.env.TURBO_PAYMENT_URL;
 
 const MAX_REPO_FILES = Number(process.env.MAX_REPO_FILES || 5000);
 const MAX_REPO_BYTES = Number(process.env.MAX_REPO_BYTES || 524288000);
 const MAX_FILE_BYTES = Number(process.env.MAX_FILE_BYTES || 104857600);
 const JOB_TTL_SECONDS = Number(process.env.JOB_TTL_SECONDS || 3600);
 const DOWNLOAD_CONCURRENCY = 3;
+
+// Validācija - pārbauda obligātos ENV mainīgos
+if (!CHAIN_ID) {
+    console.error('❌ CHAIN_ID nav iestatīts!');
+    process.exit(1);
+}
 
 initRedis();
 
@@ -534,8 +540,9 @@ app.get('*', (req, res) => {
 app.listen(PORT, () => {
     logSection('🚀 PERMAREPO SERVERIS (Vite + React)');
     logInfo('Ports', PORT);
+    logInfo('Chain ID', CHAIN_ID);
     logInfo('Redis', getRedis() ? '✅ IR' : '❌ NAV');
-    logInfo('Turbo Upload', TURBO_UPLOAD_URL);
-    logInfo('Turbo Payment', TURBO_PAYMENT_URL);
+    logInfo('Turbo Upload', TURBO_UPLOAD_URL || '❌ NAV');
+    logInfo('Turbo Payment', TURBO_PAYMENT_URL || '❌ NAV');
     console.log('='.repeat(60) + '\n');
 });
