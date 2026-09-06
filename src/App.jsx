@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
+import { useNavigate } from 'react-router-dom';
 import { translations } from './translations';
 
 const NFT_ABI = [
@@ -25,6 +26,7 @@ function icon(name) {
 }
 
 function App() {
+    const navigate = useNavigate();
     const [config, setConfig] = useState(null);
     const [userAddress, setUserAddress] = useState(null);
     const [signer, setSigner] = useState(null);
@@ -310,7 +312,7 @@ function App() {
                             
                             {selectedRepo.hasNFT ? (
                                 <button 
-                                    onClick={() => window.location.href = `/backup.html?repo=${encodeURIComponent(selectedRepo.name)}`}
+                                    onClick={() => navigate(`/backup?repo=${encodeURIComponent(selectedRepo.name)}`)}
                                     className="sign-button"
                                 >
                                     {t('open-backup')}
