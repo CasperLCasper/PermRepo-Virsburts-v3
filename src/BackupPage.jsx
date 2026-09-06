@@ -20,7 +20,7 @@ function icon(name) {
 }
 
 function BackupPage() {
-    const [config, setConfig] = useState({});
+    const [config, setConfig] = useState(null);
     const [currentLanguage, setCurrentLanguage] = useState(localStorage.getItem('permrepo-language') || 'lv');
     const [repoName, setRepoName] = useState(null);
     const [tokenId, setTokenId] = useState(null);
@@ -34,6 +34,7 @@ function BackupPage() {
     const [backupCompleted, setBackupCompleted] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
     const [currentFiles, setCurrentFiles] = useState([]);
+    const [currentJobId, setCurrentJobId] = useState(null);
     const [nftInfo, setNftInfo] = useState({ tokenId: null, backupCount: null, lastManifest: null, lastMerkleRoot: null });
 
     const t = useCallback((key) => {
@@ -185,81 +186,82 @@ function BackupPage() {
             try {
                 const configData = await apiJson('/api/config');
                 setConfig(configData);
-            } catch (e) {
-                setError(e.message);
-                return;
-            }
-            
-            const params = new URLSearchParams(window.location.search);
-            const repo = params.get('repo');
-            if (!repo) {
-                setError('Nav repo nosaukuma URL parametrā!');
-                return;
-            }
-            setRepoName(repo);
-            
-            try {
-                const userData = await apiJson('/api/github/user');
-                if (!userData.success) {
-                    window.location.href = '/api/github/login';
+                
+                const params = new URLSearchParams(window.location.search);
+                const repo = params.get('repo');
+                if (!repo) {
+                    setError('Nav repo nosaukuma URL parametrā!');
                     return;
                 }
-                setGithubUser(userData.user);
-            } catch (e) {
-                setError(e.message);
-                return;
-            }
-            
-            if (!window.ethereum) {
-                setError('Lūdzu instalē maku!');
-                return;
-            }
-            
-            try {
-                await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: configData.chainId }] });
-                const provider = new ethers.BrowserProvider(window.ethereum);
-                const signerInstance = await provider.getSigner();
-                const address = await signerInstance.getAddress();
-                setSigner(signerInstance);
-                setUserAddress(address);
+                setRepoName(repo);
                 
-                // Turbo klients ar ENV mainīgajiem
-                const client = TurboFactory.authenticated({
-                    signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
-                    token: 'base-eth',
-                    gatewayUrl: configData.rpcUrl || 'https://sepolia.base.org',
-                    uploadServiceConfig: { url: configData.turboUploadUrl || 'https://upload.services.ar-io.dev' },
-                    paymentServiceConfig: { url: configData.turboPaymentUrl || 'https://payment.services.ar-io.dev' }
-                });
-                setTurboClient(client);
-                
-                // NFT info
-                const nftContract = new ethers.Contract(configData.nftAddress, NFT_ABI, provider);
-                const fullRepoName = `${userData.user}/${repo}`;
-                const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
-                const tokenId = await nftContract.repositoryTokens(repoHash);
-                if (tokenId === 0n) {
-                    setError('Nav NFT šim repo!');
-                    return;
-                }
-                const nftOwner = await nftContract.ownerOf(tokenId);
-                if (nftOwner.toLowerCase() !== address.toLowerCase()) {
-                    setError('NFT nepieder šim makam!');
+                try {
+                    const userData = await apiJson('/api/github/user');
+                    if (!userData.success) {
+                        window.location.href = '/api/github/login';
+                        return;
+                    }
+                    setGithubUser(userData.user);
+                } catch (e) {
+                    setError(e.message);
                     return;
                 }
                 
-                const backupCount = await nftContract.getBackupCount(tokenId);
-                const lastManifest = await nftContract.getManifestURI(tokenId);
-                const lastMerkleRoot = await nftContract.getLastMerkleRoot(tokenId);
+                if (!window.ethereum) {
+                    setError('Lūdzu instalē maku!');
+                    return;
+                }
                 
-                setTokenId(tokenId);
-                setNftInfo({
-                    tokenId: tokenId.toString(),
-                    backupCount: backupCount.toString(),
-                    lastManifest: lastManifest || 'Nav',
-                    lastMerkleRoot: lastMerkleRoot || 'Nav'
-                });
-                
+                try {
+                    await window.ethereum.request({ 
+                        method: 'wallet_switchEthereumChain', 
+                        params: [{ chainId: configData.chainId }] 
+                    });
+                    
+                    const provider = new ethers.BrowserProvider(window.ethereum);
+                    const signerInstance = await provider.getSigner();
+                    const address = await signerInstance.getAddress();
+                    setSigner(signerInstance);
+                    setUserAddress(address);
+                    
+                    const client = TurboFactory.authenticated({
+                        signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
+                        token: 'base-eth',
+                        gatewayUrl: configData.rpcUrl,
+                        uploadServiceConfig: { url: configData.turboUploadUrl },
+                        paymentServiceConfig: { url: configData.turboPaymentUrl }
+                    });
+                    setTurboClient(client);
+                    
+                    const nftContract = new ethers.Contract(configData.nftAddress, NFT_ABI, provider);
+                    const fullRepoName = `${userData.user}/${repo}`;
+                    const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
+                    const tokenIdResult = await nftContract.repositoryTokens(repoHash);
+                    if (tokenIdResult === 0n) {
+                        setError('Nav NFT šim repo!');
+                        return;
+                    }
+                    const nftOwner = await nftContract.ownerOf(tokenIdResult);
+                    if (nftOwner.toLowerCase() !== address.toLowerCase()) {
+                        setError('NFT nepieder šim makam!');
+                        return;
+                    }
+                    
+                    const backupCount = await nftContract.getBackupCount(tokenIdResult);
+                    const lastManifest = await nftContract.getManifestURI(tokenIdResult);
+                    const lastMerkleRoot = await nftContract.getLastMerkleRoot(tokenIdResult);
+                    
+                    setTokenId(tokenIdResult);
+                    setNftInfo({
+                        tokenId: tokenIdResult.toString(),
+                        backupCount: backupCount.toString(),
+                        lastManifest: lastManifest || 'Nav',
+                        lastMerkleRoot: lastMerkleRoot || 'Nav'
+                    });
+                    
+                } catch (e) {
+                    setError(e.message);
+                }
             } catch (e) {
                 setError(e.message);
             }
@@ -281,6 +283,7 @@ function BackupPage() {
             });
             
             setCurrentFiles(result.files || []);
+            setCurrentJobId(result.jobId);
             
             if (!result.files || result.files.length === 0) {
                 setStatus(`✅ ${t('no-changes')}`);
@@ -444,6 +447,14 @@ function BackupPage() {
             setIsWorking(false);
         }
     }, [apiJson, t, turboClient, signer, tokenId, githubUser, repoName, config, nftInfo.backupCount, showMasterKey, promptMasterKey, isValidMasterKey, encryptData, calculateMerkleRoot]);
+
+    if (!config) {
+        return (
+            <div className="container">
+                <p>Ielādē...</p>
+            </div>
+        );
+    }
 
     return (
         <div className="container">
