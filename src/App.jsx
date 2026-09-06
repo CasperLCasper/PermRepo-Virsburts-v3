@@ -25,7 +25,7 @@ function icon(name) {
 }
 
 function App() {
-    const [config, setConfig] = useState({});
+    const [config, setConfig] = useState(null);
     const [userAddress, setUserAddress] = useState(null);
     const [signer, setSigner] = useState(null);
     const [githubUser, setGithubUser] = useState(null);
@@ -39,11 +39,6 @@ function App() {
     const t = useCallback((key) => {
         return translations[currentLanguage]?.[key] || translations.lv[key] || key;
     }, [currentLanguage]);
-
-    const switchLanguage = useCallback((lang) => {
-        setCurrentLanguage(lang);
-        localStorage.setItem('permrepo-language', lang);
-    }, []);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -114,21 +109,11 @@ function App() {
             setSigner(signerInstance);
             setUserAddress(address);
             
-            await loadRepos(address, signerInstance, provider);
-        } catch (e) {
-            setError(e.message);
-        }
-    }, [config]);
-
-    const loadRepos = useCallback(async (address, signerInstance, provider) => {
-        try {
             const data = await apiJson('/api/github/repos');
             if (!data.success || data.repos.length === 0) {
                 setError('Nav atrasts neviens repozitorijs');
                 return;
             }
-            
-            setReposData(data.repos);
             
             const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             
@@ -146,11 +131,7 @@ function App() {
         } catch (e) {
             setError(e.message);
         }
-    }, [apiJson, config, githubUser]);
-
-    const checkRepoStatus = useCallback(async (repoName) => {
-        setSelectedRepoName(repoName);
-    }, []);
+    }, [config, apiJson, githubUser]);
 
     const mintNFT = useCallback(async (repoName) => {
         try {
@@ -168,7 +149,6 @@ function App() {
             
             setStatus('✅ NFT izveidots!');
             await connectWallet();
-            setSelectedRepoName(repoName);
         } catch (e) {
             if (e.code === 'ACTION_REJECTED') {
                 setError('Transakcija atcelta');
@@ -193,7 +173,6 @@ function App() {
                 if (userData.success) {
                     setGithubUser(userData.user);
                     await checkSubscription();
-                    await connectWallet();
                 }
             } catch (e) {
                 console.error('Init kļūda:', e);
@@ -203,14 +182,28 @@ function App() {
         initApp();
     }, []);
 
+    useEffect(() => {
+        if (config && githubUser) {
+            connectWallet();
+        }
+    }, [config, githubUser]);
+
     const selectedRepo = reposData.find(r => r.name === selectedRepoName);
+
+    if (!config) {
+        return (
+            <div className="container">
+                <p>Ielādē...</p>
+            </div>
+        );
+    }
 
     return (
         <div className="container">
             <div className="language-selector">
-                <button className={`lang-btn ${currentLanguage === 'lv' ? 'active' : ''}`} onClick={() => switchLanguage('lv')}>LV</button>
-                <button className={`lang-btn ${currentLanguage === 'en' ? 'active' : ''}`} onClick={() => switchLanguage('en')}>EN</button>
-                <button className={`lang-btn ${currentLanguage === 'eo' ? 'active' : ''}`} onClick={() => switchLanguage('eo')}>EO</button>
+                <button className={`lang-btn ${currentLanguage === 'lv' ? 'active' : ''}`} onClick={() => setCurrentLanguage('lv')}>LV</button>
+                <button className={`lang-btn ${currentLanguage === 'en' ? 'active' : ''}`} onClick={() => setCurrentLanguage('en')}>EN</button>
+                <button className={`lang-btn ${currentLanguage === 'eo' ? 'active' : ''}`} onClick={() => setCurrentLanguage('eo')}>EO</button>
             </div>
             
             <img src="/icons/logo-nosaukums.svg" alt="PermRepo" className="logo-title" />
@@ -219,7 +212,6 @@ function App() {
             {subscriptionStatus && (
                 <div style={{ display: 'block', marginBottom: '16px' }}>
                     <button 
-                        className={`subscription-button ${subscriptionStatus.isSubscribed ? 'active' : 'inactive'}`}
                         disabled={subscriptionStatus.isSubscribed}
                         onClick={subscriptionStatus.isSubscribed ? undefined : purchaseSubscription}
                         style={{ 
