@@ -1,4 +1,4 @@
-// server.js - Express API, bez privātās atslēgas
+// server.js - Express API, bez privātās atslēgas, ar TURBO_URL env
 
 import express from 'express';
 import path from 'path';
@@ -33,6 +33,8 @@ const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const GITHUB_REDIRECT_URI = process.env.GITHUB_REDIRECT_URI;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+const TURBO_UPLOAD_URL = process.env.TURBO_UPLOAD_URL || 'https://upload.services.ar-io.dev';
+const TURBO_PAYMENT_URL = process.env.TURBO_PAYMENT_URL || 'https://payment.services.ar-io.dev';
 
 const MAX_REPO_FILES = Number(process.env.MAX_REPO_FILES || 5000);
 const MAX_REPO_BYTES = Number(process.env.MAX_REPO_BYTES || 524288000);
@@ -88,7 +90,6 @@ async function withJobLock(jobId, fn) {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-// DROŠĪBAS GALVENES
 app.use((req, res, next) => {
     res.setHeader('Content-Security-Policy', 
         "default-src 'self'; " +
@@ -96,7 +97,7 @@ app.use((req, res, next) => {
         "style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data: blob:; " +
         "font-src 'self'; " +
-        "connect-src 'self' https://ar-io.dev https://arweave.net https://api.github.com https://github.com https://sepolia.base.org https://upload.services.ar-io.dev https://payment.services.ar-io.dev; " +
+        "connect-src 'self' https://ar-io.dev https://arweave.net https://api.github.com https://github.com https://sepolia.base.org https://base-sepolia-rpc.publicnode.com https://upload.services.ar-io.dev https://payment.services.ar-io.dev; " +
         "form-action 'self' https://github.com; " +
         "frame-ancestors 'none'; " +
         "object-src 'none';"
@@ -109,7 +110,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// Statiskie faili no dist/ (Vite build)
 app.use(express.static(path.join(__dirname, 'dist')));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -125,7 +125,6 @@ app.use(session({
     }
 }));
 
-// RATE LIMITING
 const githubApiLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 30,
@@ -133,7 +132,6 @@ const githubApiLimiter = rateLimit({
     keyGenerator: (req) => req.session.githubUser || req.ip
 });
 
-// GITHUB API AR RETRY UN RATE LIMITING
 class GitHubRateLimiter {
     constructor() {
         this.remaining = 5000;
@@ -205,7 +203,6 @@ async function fetchWithRetry(url, options, retries = 3) {
     throw new Error('GitHub API pieprasījums neizdevās pēc vairākiem mēģinājumiem.');
 }
 
-// GITHUB OAUTH
 function createOAuthState() {
     return crypto.randomBytes(32).toString('hex');
 }
@@ -276,7 +273,6 @@ app.get('/api/github/repos', githubApiLimiter, async (req, res) => {
     }
 });
 
-// CONFIG
 app.get('/api/config', (req, res) => {
     res.json({
         chainId: CHAIN_ID,
@@ -284,11 +280,12 @@ app.get('/api/config', (req, res) => {
         subscriptionAddress: process.env.SUBSCRIPTION_ADDRESS,
         usdcAddress: process.env.USDC_ADDRESS,
         arweaveGateway: ARWEAVE_GATEWAY,
-        rpcUrl: process.env.RPC_URL
+        rpcUrl: process.env.RPC_URL,
+        turboUploadUrl: TURBO_UPLOAD_URL,
+        turboPaymentUrl: TURBO_PAYMENT_URL
     });
 });
 
-// SUBSCRIPTION STATUS
 const SUBSCRIPTION_ABI = [
     "function isSubscribed(bytes32 githubHash) external view returns (bool)",
     "function getSubscriptionExpiry(bytes32 githubHash) external view returns (uint256)",
@@ -328,7 +325,6 @@ app.get('/api/subscription/status', async (req, res) => {
     }
 });
 
-// GITHUB FILES
 async function downloadSingleFile(githubToken, file) {
     if (file.size > MAX_FILE_BYTES) {
         throw new Error(`Fails ${file.path} pārsniedz ${MAX_FILE_BYTES} bytes limitu.`);
@@ -428,7 +424,6 @@ async function getRepoFiles(githubToken, owner, repo, repoPath = '', state = nul
     return state.files;
 }
 
-// PREPARE BACKUP
 app.post('/api/prepare-backup', githubApiLimiter, async (req, res) => {
     try {
         const { repoName, walletAddress } = req.body;
@@ -483,7 +478,6 @@ app.post('/api/prepare-backup', githubApiLimiter, async (req, res) => {
     }
 });
 
-// SAVE ZIP TX ID
 app.post('/api/save-zip-tx', async (req, res) => {
     const { jobId, zipTxId } = req.body;
     
@@ -503,7 +497,6 @@ app.post('/api/save-zip-tx', async (req, res) => {
     }
 });
 
-// SAVE MANIFEST TX ID
 app.post('/api/save-manifest-tx', async (req, res) => {
     const { jobId, manifestTxId, manifest } = req.body;
     
@@ -524,7 +517,6 @@ app.post('/api/save-manifest-tx', async (req, res) => {
     }
 });
 
-// HEALTH
 app.get('/api/health', (req, res) => {
     res.json({
         status: 'ok',
@@ -535,15 +527,15 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// CATCH-ALL - servē React app
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-// START
 app.listen(PORT, () => {
-    logSection('🚀 PERMAREPO SERVERIS (Vite + React, bez privātās atslēgas)');
+    logSection('🚀 PERMAREPO SERVERIS (Vite + React)');
     logInfo('Ports', PORT);
     logInfo('Redis', getRedis() ? '✅ IR' : '❌ NAV');
+    logInfo('Turbo Upload', TURBO_UPLOAD_URL);
+    logInfo('Turbo Payment', TURBO_PAYMENT_URL);
     console.log('='.repeat(60) + '\n');
 });
