@@ -298,6 +298,15 @@ function BackupPage() {
             setCurrentFiles(result.files || []);
             setCurrentJobId(result.jobId);
             
+            console.log('=== PREPARE BACKUP REZULTĀTS ===');
+            console.log('Failu skaits:', result.files ? result.files.length : 0);
+            console.log('Pirmais fails:', result.files && result.files.length > 0 ? {
+                path: result.files[0].path,
+                size: result.files[0].size,
+                contentLength: result.files[0].content ? result.files[0].content.length : 'NAV',
+                contentPreview: result.files[0].content ? result.files[0].content.substring(0, 100) : 'NAV'
+            } : 'NAV');
+            
             if (!result.files || result.files.length === 0) {
                 setStatus(`✅ ${t('no-changes')}`);
                 setIsWorking(false);
@@ -335,40 +344,94 @@ function BackupPage() {
                 return;
             }
             
-            // ZIP izveide ar charCodeAt() un & 0xFF
+            console.log('=== ZIP IZVEIDE ===');
+            console.log('Failu skaits:', files.length);
+            
             const zip = new JSZip();
-            for (const file of files) {
-                if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
-                    throw new Error('Nederīgs faila objekts.');
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                
+                console.log(`\n--- Fails ${i + 1}/${files.length} ---`);
+                console.log('Path:', file.path);
+                console.log('Size:', file.size);
+                console.log('Content tips:', typeof file.content);
+                console.log('Content garums:', file.content ? file.content.length : 'NAV SATURA!');
+                
+                if (!file.content || file.content.length === 0) {
+                    console.error('❌ TUKŠS SATURS!');
+                    throw new Error('Tukšs faila saturs: ' + file.path);
                 }
-                const binaryString = atob(file.content);
-                const fileBuffer = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    fileBuffer[i] = binaryString.charCodeAt(i) & 0xFF;
+                
+                try {
+                    const binaryString = atob(file.content);
+                    console.log('Decodēts garums:', binaryString.length);
+                    
+                    const fileBuffer = new Uint8Array(binaryString.length);
+                    for (let j = 0; j < binaryString.length; j++) {
+                        fileBuffer[j] = binaryString.charCodeAt(j) & 0xFF;
+                    }
+                    
+                    console.log('Buffer izmērs:', fileBuffer.length);
+                    console.log('Buffer pirmie 5 baiti:', Array.from(fileBuffer.slice(0, 5)));
+                    
+                    zip.file(file.path, fileBuffer);
+                    console.log('✅ Fails pievienots ZIP');
+                    
+                } catch (decodeError) {
+                    console.error('❌ Base64 dekodēšanas kļūda:', decodeError);
+                    throw new Error('Base64 dekodēšana neizdevās: ' + decodeError.message);
                 }
-                zip.file(file.path, fileBuffer);
             }
+            
             const zipBuffer = await zip.generateAsync({ 
                 type: 'uint8array',
                 compression: 'DEFLATE',
                 compressionOptions: { level: 6 }
             });
             
+            console.log('\n=== ZIP REZULTĀTS ===');
+            console.log('ZIP izmērs:', zipBuffer.length);
+            console.log('ZIP pirmie 10 baiti:', Array.from(zipBuffer.slice(0, 10)));
+            
+            if (zipBuffer.length === 0) {
+                console.error('❌ ZIP IR TUKŠS!');
+                throw new Error('ZIP arhīvs ir tukšs.');
+            }
+            
+            console.log('✅ ZIP veiksmīgi izveidots!');
+            
             setStatus(`⏳ ${t('encrypting')}`);
+            
+            console.log('\n=== ŠIFRĒŠANA ===');
+            
             const encrypted = await encryptData(zipBuffer, masterKey);
             const encryptedZipData = encrypted.encrypted;
             const iv = encrypted.iv;
             const merkleRoot = calculateMerkleRoot(files);
             const fileMetadata = files.map(file => ({ path: file.path, hash: file.hash }));
             
+            console.log('Šifrēto datu izmērs:', encryptedZipData.length);
+            console.log('Šifrēto datu pirmie 5 baiti:', Array.from(encryptedZipData.slice(0, 5)));
+            
+            if (encryptedZipData.length === 0) {
+                console.error('❌ ŠIFRĒTIE DATI IR TUKŠI!');
+                throw new Error('Šifrētie dati ir tukši.');
+            }
+            
+            console.log('✅ Šifrēšana veiksmīga!');
+            
             setStatus(`⏳ ${t('uploading')}`);
             
-            // ✅ FILE OBJEKTS no šifrētiem datiem (kā testa platformā):
+            console.log('\n=== AUGŠUPIELĀDE ===');
+            
             const encryptedZipFile = new File([encryptedZipData], 'encrypted.zip', { 
                 type: 'application/zip' 
             });
             
-            // ✅ Augšupielāde ar FILE objektu, bez chunking:
+            console.log('File nosaukums:', encryptedZipFile.name);
+            console.log('File izmērs:', encryptedZipFile.size);
+            console.log('File tips:', encryptedZipFile.type);
+            
             const zipResult = await turboClient.uploadFile({
                 file: encryptedZipFile,
                 dataItemOpts: {
@@ -383,6 +446,9 @@ function BackupPage() {
                 }
             });
             
+            console.log('✅ ZIP augšupielāde veiksmīga!');
+            console.log('ZIP TX ID:', zipResult.id);
+            
             const zipTxId = zipResult.id;
             
             await apiJson('/api/save-zip-tx', {
@@ -392,6 +458,9 @@ function BackupPage() {
             });
             
             setStatus(`⏳ ${t('manifest-ready')}`);
+            
+            console.log('\n=== MANIFESTS ===');
+            
             const manifest = {
                 manifest: 'arweave/paths',
                 version: '0.2.0',
@@ -403,10 +472,11 @@ function BackupPage() {
                 manifest.paths[file.path] = { id: zipTxId };
             }
             
-            // ✅ Manifest arī ar File objektu:
             const manifestFile = new File([JSON.stringify(manifest)], 'manifest.json', { 
                 type: 'application/x.arweave-manifest+json' 
             });
+            
+            console.log('Manifest izmērs:', manifestFile.size);
             
             const manifestResult = await turboClient.uploadFile({
                 file: manifestFile,
@@ -421,6 +491,9 @@ function BackupPage() {
                 }
             });
             
+            console.log('✅ Manifesta augšupielāde veiksmīga!');
+            console.log('Manifest TX ID:', manifestResult.id);
+            
             const manifestTxId = manifestResult.id;
             
             await apiJson('/api/save-manifest-tx', {
@@ -430,6 +503,9 @@ function BackupPage() {
             });
             
             setStatus(`⏳ ${t('signing')}`);
+            
+            console.log('\n=== NFT IZSAUKUMS ===');
+            
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const deadline = Math.floor(Date.now() / 1000) + 600;
@@ -464,11 +540,19 @@ function BackupPage() {
             const tx = await nftWrite.addBackup(tokenId, manifestHash, merkleRoot, manifestURI, deadline, signature);
             await tx.wait();
             
+            console.log('✅ NFT izsaukums veiksmīgs!');
+            console.log('TX:', tx.hash);
+            
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             setStatus(`✅ ${t('backup-complete')}`);
             
         } catch (e) {
+            console.error('\n=== KĻŪDA ===');
+            console.error('Kļūdas ziņojums:', e.message);
+            console.error('Kļūdas tips:', e.name);
+            console.error('Pilna kļūda:', e);
+            
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
             } else {
