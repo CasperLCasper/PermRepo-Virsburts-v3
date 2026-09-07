@@ -31,6 +31,7 @@ function BackupPage() {
     const [userAddress, setUserAddress] = useState(null);
     const [signer, setSigner] = useState(null);
     const [turboClient, setTurboClient] = useState(null);
+    const [walletConnected, setWalletConnected] = useState(false);
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
@@ -184,6 +185,74 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
+    const connectWallet = useCallback(async () => {
+        try {
+            if (!window.ethereum) {
+                setError('Lūdzu instalē maku!');
+                return;
+            }
+            
+            setStatus('⏳ Savieno maku...');
+            setError('');
+            
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            const address = accounts[0];
+            
+            await window.ethereum.request({ 
+                method: 'wallet_switchEthereumChain', 
+                params: [{ chainId: config.chainId }] 
+            });
+            
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signerInstance = await provider.getSigner();
+            
+            setSigner(signerInstance);
+            setUserAddress(address);
+            setWalletConnected(true);
+            
+            const client = TurboFactory.authenticated({
+                signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
+                token: 'base-eth',
+                gatewayUrl: config.rpcUrl,
+                uploadServiceConfig: { url: config.turboUploadUrl },
+                paymentServiceConfig: { url: config.turboPaymentUrl }
+            });
+            setTurboClient(client);
+            
+            // Ielādē NFT info
+            const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
+            const fullRepoName = `${githubUser}/${repoName}`;
+            const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
+            const tokenIdResult = await nftContract.repositoryTokens(repoHash);
+            if (tokenIdResult === 0n) {
+                setError('Nav NFT šim repo!');
+                return;
+            }
+            const nftOwner = await nftContract.ownerOf(tokenIdResult);
+            if (nftOwner.toLowerCase() !== address.toLowerCase()) {
+                setError('NFT nepieder šim makam!');
+                return;
+            }
+            
+            const backupCount = await nftContract.getBackupCount(tokenIdResult);
+            const lastManifest = await nftContract.getManifestURI(tokenIdResult);
+            const lastMerkleRoot = await nftContract.getLastMerkleRoot(tokenIdResult);
+            
+            setTokenId(tokenIdResult);
+            setNftInfo({
+                tokenId: tokenIdResult.toString(),
+                backupCount: backupCount.toString(),
+                lastManifest: lastManifest || 'Nav',
+                lastMerkleRoot: lastMerkleRoot || 'Nav'
+            });
+            
+            setStatus('✅ Maks savienots: ' + address);
+            
+        } catch (e) {
+            setError(e.message);
+        }
+    }, [config, githubUser, repoName]);
+
     useEffect(() => {
         const initPage = async () => {
             try {
@@ -207,61 +276,6 @@ function BackupPage() {
                     return;
                 }
                 
-                if (!window.ethereum) {
-                    setError('Lūdzu instalē maku!');
-                    return;
-                }
-                
-                try {
-                    await window.ethereum.request({ 
-                        method: 'wallet_switchEthereumChain', 
-                        params: [{ chainId: configData.chainId }] 
-                    });
-                    
-                    const provider = new ethers.BrowserProvider(window.ethereum);
-                    const signerInstance = await provider.getSigner();
-                    const address = await signerInstance.getAddress();
-                    setSigner(signerInstance);
-                    setUserAddress(address);
-                    
-                    const client = TurboFactory.authenticated({
-                        signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
-                        token: 'base-eth',
-                        gatewayUrl: configData.rpcUrl,
-                        uploadServiceConfig: { url: configData.turboUploadUrl },
-                        paymentServiceConfig: { url: configData.turboPaymentUrl }
-                    });
-                    setTurboClient(client);
-                    
-                    const nftContract = new ethers.Contract(configData.nftAddress, NFT_ABI, provider);
-                    const fullRepoName = `${userData.user}/${repoName}`;
-                    const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
-                    const tokenIdResult = await nftContract.repositoryTokens(repoHash);
-                    if (tokenIdResult === 0n) {
-                        setError('Nav NFT šim repo!');
-                        return;
-                    }
-                    const nftOwner = await nftContract.ownerOf(tokenIdResult);
-                    if (nftOwner.toLowerCase() !== address.toLowerCase()) {
-                        setError('NFT nepieder šim makam!');
-                        return;
-                    }
-                    
-                    const backupCount = await nftContract.getBackupCount(tokenIdResult);
-                    const lastManifest = await nftContract.getManifestURI(tokenIdResult);
-                    const lastMerkleRoot = await nftContract.getLastMerkleRoot(tokenIdResult);
-                    
-                    setTokenId(tokenIdResult);
-                    setNftInfo({
-                        tokenId: tokenIdResult.toString(),
-                        backupCount: backupCount.toString(),
-                        lastManifest: lastManifest || 'Nav',
-                        lastMerkleRoot: lastMerkleRoot || 'Nav'
-                    });
-                    
-                } catch (e) {
-                    setError(e.message);
-                }
             } catch (e) {
                 setError(e.message);
             }
@@ -487,23 +501,33 @@ function BackupPage() {
                 <span className="info-value">{nftInfo.lastMerkleRoot || '-'}</span>
             </div>
             
-            {!backupCompleted ? (
+            {!walletConnected ? (
                 <button 
-                    onClick={prepareBackup}
-                    disabled={isWorking || !turboClient}
+                    onClick={connectWallet}
                     className="sign-button"
                     style={{ marginTop: '20px' }}
                 >
-                    {isWorking ? '⏳' : t('start-backup')}
+                    🔗 Savienot maku
                 </button>
             ) : (
-                <button 
-                    onClick={() => navigate('/')}
-                    className="sign-button"
-                    style={{ marginTop: '20px' }}
-                >
-                    {t('back-home')}
-                </button>
+                !backupCompleted ? (
+                    <button 
+                        onClick={prepareBackup}
+                        disabled={isWorking || !turboClient}
+                        className="sign-button"
+                        style={{ marginTop: '20px' }}
+                    >
+                        {isWorking ? '⏳' : t('start-backup')}
+                    </button>
+                ) : (
+                    <button 
+                        onClick={() => navigate('/')}
+                        className="sign-button"
+                        style={{ marginTop: '20px' }}
+                    >
+                        {t('back-home')}
+                    </button>
+                )
             )}
             
             {status && (
