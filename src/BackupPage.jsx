@@ -335,7 +335,7 @@ function BackupPage() {
                 return;
             }
             
-            // ✅ PAREIZA ZIP izveide ar charCodeAt() un & 0xFF:
+            // ZIP izveide ar charCodeAt() un & 0xFF
             const zip = new JSZip();
             for (const file of files) {
                 if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
@@ -362,12 +362,15 @@ function BackupPage() {
             const fileMetadata = files.map(file => ({ path: file.path, hash: file.hash }));
             
             setStatus(`⏳ ${t('uploading')}`);
-            const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             
-            // ✅ PIEVIENO CHUNKING:
+            // ✅ FILE OBJEKTS no šifrētiem datiem (kā testa platformā):
+            const encryptedZipFile = new File([encryptedZipData], 'encrypted.zip', { 
+                type: 'application/zip' 
+            });
+            
+            // ✅ Augšupielāde ar FILE objektu, bez chunking:
             const zipResult = await turboClient.uploadFile({
-                fileStreamFactory: () => zipBlob.stream(),
-                fileSizeFactory: () => zipBlob.size,
+                file: encryptedZipFile,
                 dataItemOpts: {
                     tags: [
                         { name: 'App-Name', value: 'PermRepo' },
@@ -377,10 +380,7 @@ function BackupPage() {
                         { name: 'Encrypted', value: 'true' },
                         { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
                     ]
-                },
-                chunkByteCount: 5 * 1024 * 1024,
-                maxChunkConcurrency: 3,
-                chunkingMode: 'auto'
+                }
             });
             
             const zipTxId = zipResult.id;
@@ -403,10 +403,13 @@ function BackupPage() {
                 manifest.paths[file.path] = { id: zipTxId };
             }
             
-            const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
+            // ✅ Manifest arī ar File objektu:
+            const manifestFile = new File([JSON.stringify(manifest)], 'manifest.json', { 
+                type: 'application/x.arweave-manifest+json' 
+            });
+            
             const manifestResult = await turboClient.uploadFile({
-                fileStreamFactory: () => manifestBlob.stream(),
-                fileSizeFactory: () => manifestBlob.size,
+                file: manifestFile,
                 dataItemOpts: {
                     tags: [
                         { name: 'App-Name', value: 'PermRepo' },
@@ -415,10 +418,7 @@ function BackupPage() {
                         { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
                         { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
                     ]
-                },
-                chunkByteCount: 5 * 1024 * 1024,
-                maxChunkConcurrency: 3,
-                chunkingMode: 'auto'
+                }
             });
             
             const manifestTxId = manifestResult.id;
