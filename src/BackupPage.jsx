@@ -219,7 +219,6 @@ function BackupPage() {
             });
             setTurboClient(client);
             
-            // Ielādē NFT info
             const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const fullRepoName = `${githubUser}/${repoName}`;
             const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
