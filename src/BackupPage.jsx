@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import JSZip from 'jszip';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { translations } from './translations';
-import { TurboFactory } from '@ardrive/turbo-sdk/web';
+import { TurboFactory, OnDemandFunding } from '@ardrive/turbo-sdk/web';
 import { InjectedEthereumSigner } from '@dha-team/arbundles';
 
 const NFT_ABI = [
@@ -339,13 +339,9 @@ function BackupPage() {
             }
             
             console.log('=== ZIP IZVEIDE ===');
-            console.log('Failu skaits:', files.length);
             
             const zip = new JSZip();
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                console.log(`Fails ${i + 1}/${files.length}: ${file.path} (${file.size} bytes)`);
-                
+            for (const file of files) {
                 const binaryString = atob(file.content);
                 const fileBuffer = new Uint8Array(binaryString.length);
                 for (let j = 0; j < binaryString.length; j++) {
@@ -361,11 +357,8 @@ function BackupPage() {
             });
             
             console.log('ZIP izmērs:', zipBuffer.length);
-            console.log('ZIP pirmie baiti:', Array.from(zipBuffer.slice(0, 10)));
             
             setStatus(`⏳ ${t('encrypting')}`);
-            
-            console.log('=== ŠIFRĒŠANA ===');
             
             const encrypted = await encryptData(zipBuffer, masterKey);
             const encryptedZipData = encrypted.encrypted;
@@ -374,16 +367,13 @@ function BackupPage() {
             const fileMetadata = files.map(file => ({ path: file.path, hash: file.hash }));
             
             console.log('Šifrēto datu izmērs:', encryptedZipData.length);
-            console.log('Šifrēto datu pirmie baiti:', Array.from(encryptedZipData.slice(0, 10)));
             
             setStatus(`⏳ ${t('uploading')}`);
             
-            console.log('=== AUGŠUPIELĀDE ===');
-            
-            // ✅ Blob ar fileStreamFactory:
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             console.log('Blob izmērs:', zipBlob.size);
             
+            // ✅ OnDemandFunding - automātiska kredītu pirkšana!
             const zipResult = await turboClient.uploadFile({
                 fileStreamFactory: () => zipBlob.stream(),
                 fileSizeFactory: () => zipBlob.size,
@@ -399,7 +389,11 @@ function BackupPage() {
                 },
                 chunkByteCount: 5 * 1024 * 1024,
                 maxChunkConcurrency: 3,
-                chunkingMode: 'auto'
+                chunkingMode: 'auto',
+                fundingMode: new OnDemandFunding({
+                    maxTokenAmount: ethers.parseEther('0.01'),
+                    topUpBufferMultiplier: 1.1
+                })
             });
             
             console.log('✅ ZIP augšupielādēts! ID:', zipResult.id);
@@ -414,8 +408,6 @@ function BackupPage() {
             
             setStatus(`⏳ ${t('manifest-ready')}`);
             
-            console.log('=== MANIFESTS ===');
-            
             const manifest = {
                 manifest: 'arweave/paths',
                 version: '0.2.0',
@@ -428,7 +420,6 @@ function BackupPage() {
             }
             
             const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
-            console.log('Manifest izmērs:', manifestBlob.size);
             
             const manifestResult = await turboClient.uploadFile({
                 fileStreamFactory: () => manifestBlob.stream(),
@@ -444,7 +435,11 @@ function BackupPage() {
                 },
                 chunkByteCount: 5 * 1024 * 1024,
                 maxChunkConcurrency: 3,
-                chunkingMode: 'auto'
+                chunkingMode: 'auto',
+                fundingMode: new OnDemandFunding({
+                    maxTokenAmount: ethers.parseEther('0.01'),
+                    topUpBufferMultiplier: 1.1
+                })
             });
             
             console.log('✅ Manifests augšupielādēts! ID:', manifestResult.id);
@@ -458,8 +453,6 @@ function BackupPage() {
             });
             
             setStatus(`⏳ ${t('signing')}`);
-            
-            console.log('=== NFT IZSAUKUMS ===');
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
