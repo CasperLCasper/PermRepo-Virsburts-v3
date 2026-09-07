@@ -298,6 +298,9 @@ function BackupPage() {
             setCurrentFiles(result.files || []);
             setCurrentJobId(result.jobId);
             
+            console.log('=== PREPARE BACKUP ===');
+            console.log('Failu skaits:', result.files ? result.files.length : 0);
+            
             if (!result.files || result.files.length === 0) {
                 setStatus(`✅ ${t('no-changes')}`);
                 setIsWorking(false);
@@ -335,39 +338,55 @@ function BackupPage() {
                 return;
             }
             
+            console.log('=== ZIP IZVEIDE ===');
+            console.log('Failu skaits:', files.length);
+            
             const zip = new JSZip();
-            for (const file of files) {
-                if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
-                    throw new Error('Nederīgs faila objekts.');
-                }
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                console.log(`Fails ${i + 1}/${files.length}: ${file.path} (${file.size} bytes)`);
+                
                 const binaryString = atob(file.content);
                 const fileBuffer = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    fileBuffer[i] = binaryString.charCodeAt(i) & 0xFF;
+                for (let j = 0; j < binaryString.length; j++) {
+                    fileBuffer[j] = binaryString.charCodeAt(j) & 0xFF;
                 }
                 zip.file(file.path, fileBuffer);
             }
+            
             const zipBuffer = await zip.generateAsync({ 
                 type: 'uint8array',
                 compression: 'DEFLATE',
                 compressionOptions: { level: 6 }
             });
             
+            console.log('ZIP izmērs:', zipBuffer.length);
+            console.log('ZIP pirmie baiti:', Array.from(zipBuffer.slice(0, 10)));
+            
             setStatus(`⏳ ${t('encrypting')}`);
+            
+            console.log('=== ŠIFRĒŠANA ===');
+            
             const encrypted = await encryptData(zipBuffer, masterKey);
             const encryptedZipData = encrypted.encrypted;
             const iv = encrypted.iv;
             const merkleRoot = calculateMerkleRoot(files);
             const fileMetadata = files.map(file => ({ path: file.path, hash: file.hash }));
             
-            setStatus(`⏳ ${t('uploading')}`);
-            const encryptedZipFile = new File([encryptedZipData], 'encrypted.zip', { 
-                type: 'application/zip' 
-            });
+            console.log('Šifrēto datu izmērs:', encryptedZipData.length);
+            console.log('Šifrēto datu pirmie baiti:', Array.from(encryptedZipData.slice(0, 10)));
             
-            // ✅ CHUNKING - fails ir lielāks par 10 MiB!
+            setStatus(`⏳ ${t('uploading')}`);
+            
+            console.log('=== AUGŠUPIELĀDE ===');
+            
+            // ✅ Blob ar fileStreamFactory:
+            const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
+            console.log('Blob izmērs:', zipBlob.size);
+            
             const zipResult = await turboClient.uploadFile({
-                file: encryptedZipFile,
+                fileStreamFactory: () => zipBlob.stream(),
+                fileSizeFactory: () => zipBlob.size,
                 dataItemOpts: {
                     tags: [
                         { name: 'App-Name', value: 'PermRepo' },
@@ -383,6 +402,8 @@ function BackupPage() {
                 chunkingMode: 'auto'
             });
             
+            console.log('✅ ZIP augšupielādēts! ID:', zipResult.id);
+            
             const zipTxId = zipResult.id;
             
             await apiJson('/api/save-zip-tx', {
@@ -392,6 +413,9 @@ function BackupPage() {
             });
             
             setStatus(`⏳ ${t('manifest-ready')}`);
+            
+            console.log('=== MANIFESTS ===');
+            
             const manifest = {
                 manifest: 'arweave/paths',
                 version: '0.2.0',
@@ -403,12 +427,12 @@ function BackupPage() {
                 manifest.paths[file.path] = { id: zipTxId };
             }
             
-            const manifestFile = new File([JSON.stringify(manifest)], 'manifest.json', { 
-                type: 'application/x.arweave-manifest+json' 
-            });
+            const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
+            console.log('Manifest izmērs:', manifestBlob.size);
             
             const manifestResult = await turboClient.uploadFile({
-                file: manifestFile,
+                fileStreamFactory: () => manifestBlob.stream(),
+                fileSizeFactory: () => manifestBlob.size,
                 dataItemOpts: {
                     tags: [
                         { name: 'App-Name', value: 'PermRepo' },
@@ -423,6 +447,8 @@ function BackupPage() {
                 chunkingMode: 'auto'
             });
             
+            console.log('✅ Manifests augšupielādēts! ID:', manifestResult.id);
+            
             const manifestTxId = manifestResult.id;
             
             await apiJson('/api/save-manifest-tx', {
@@ -432,6 +458,9 @@ function BackupPage() {
             });
             
             setStatus(`⏳ ${t('signing')}`);
+            
+            console.log('=== NFT IZSAUKUMS ===');
+            
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const deadline = Math.floor(Date.now() / 1000) + 600;
@@ -466,11 +495,17 @@ function BackupPage() {
             const tx = await nftWrite.addBackup(tokenId, manifestHash, merkleRoot, manifestURI, deadline, signature);
             await tx.wait();
             
+            console.log('✅ NFT izsaukums veiksmīgs! TX:', tx.hash);
+            
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             setStatus(`✅ ${t('backup-complete')}`);
             
         } catch (e) {
+            console.error('=== KĻŪDA ===');
+            console.error('Ziņojums:', e.message);
+            console.error('Tips:', e.name);
+            
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
             } else {
