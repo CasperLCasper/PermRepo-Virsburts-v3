@@ -335,14 +335,24 @@ function BackupPage() {
                 return;
             }
             
+            // ✅ PAREIZA ZIP izveide ar charCodeAt() un & 0xFF:
             const zip = new JSZip();
             for (const file of files) {
+                if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
+                    throw new Error('Nederīgs faila objekts.');
+                }
                 const binaryString = atob(file.content);
                 const fileBuffer = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) fileBuffer[i] = binaryString.codePointAt(i);
+                for (let i = 0; i < binaryString.length; i++) {
+                    fileBuffer[i] = binaryString.charCodeAt(i) & 0xFF;
+                }
                 zip.file(file.path, fileBuffer);
             }
-            const zipBuffer = await zip.generateAsync({ type: 'uint8array' });
+            const zipBuffer = await zip.generateAsync({ 
+                type: 'uint8array',
+                compression: 'DEFLATE',
+                compressionOptions: { level: 6 }
+            });
             
             setStatus(`⏳ ${t('encrypting')}`);
             const encrypted = await encryptData(zipBuffer, masterKey);
@@ -353,6 +363,8 @@ function BackupPage() {
             
             setStatus(`⏳ ${t('uploading')}`);
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
+            
+            // ✅ PIEVIENO CHUNKING:
             const zipResult = await turboClient.uploadFile({
                 fileStreamFactory: () => zipBlob.stream(),
                 fileSizeFactory: () => zipBlob.size,
@@ -365,7 +377,10 @@ function BackupPage() {
                         { name: 'Encrypted', value: 'true' },
                         { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
                     ]
-                }
+                },
+                chunkByteCount: 5 * 1024 * 1024,
+                maxChunkConcurrency: 3,
+                chunkingMode: 'auto'
             });
             
             const zipTxId = zipResult.id;
@@ -400,7 +415,10 @@ function BackupPage() {
                         { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
                         { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
                     ]
-                }
+                },
+                chunkByteCount: 5 * 1024 * 1024,
+                maxChunkConcurrency: 3,
+                chunkingMode: 'auto'
             });
             
             const manifestTxId = manifestResult.id;
