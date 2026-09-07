@@ -35,6 +35,7 @@ function App() {
     const [reposData, setReposData] = useState([]);
     const [selectedRepoName, setSelectedRepoName] = useState(null);
     const [subscriptionStatus, setSubscriptionStatus] = useState(null);
+    const [walletConnected, setWalletConnected] = useState(false);
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
 
@@ -99,6 +100,12 @@ function App() {
         }
         
         try {
+            setStatus('⏳ Savieno maku...');
+            setError('');
+            
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            const address = accounts[0];
+            
             await window.ethereum.request({ 
                 method: 'wallet_switchEthereumChain', 
                 params: [{ chainId: config.chainId }] 
@@ -106,10 +113,10 @@ function App() {
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signerInstance = await provider.getSigner();
-            const address = await signerInstance.getAddress();
             
             setSigner(signerInstance);
             setUserAddress(address);
+            setWalletConnected(true);
             
             const data = await apiJson('/api/github/repos');
             if (!data.success || data.repos.length === 0) {
@@ -130,6 +137,8 @@ function App() {
             }
             
             setReposData(reposWithStatus);
+            setStatus('✅ Maks savienots: ' + address);
+            
         } catch (e) {
             setError(e.message);
         }
@@ -183,12 +192,6 @@ function App() {
         
         initApp();
     }, []);
-
-    useEffect(() => {
-        if (config && githubUser) {
-            connectWallet();
-        }
-    }, [config, githubUser]);
 
     const selectedRepo = reposData.find(r => r.name === selectedRepoName);
 
@@ -266,7 +269,18 @@ function App() {
                 </div>
             )}
             
-            {userAddress && (
+            {githubUser && !walletConnected && (
+                <div style={{ display: 'block', marginTop: '16px' }}>
+                    <button 
+                        onClick={connectWallet}
+                        className="sign-button"
+                    >
+                        🔗 Savienot maku
+                    </button>
+                </div>
+            )}
+            
+            {walletConnected && (
                 <div style={{ display: 'block' }}>
                     <div className="info-row text-left">
                         <span className="info-label">{t('wallet')}</span>
@@ -279,7 +293,7 @@ function App() {
                 </div>
             )}
             
-            {githubUser && userAddress && reposData.length > 0 && (
+            {walletConnected && reposData.length > 0 && (
                 <div style={{ display: 'block', marginTop: '16px' }}>
                     <div className="info-row text-left">
                         <label className="info-label">{t('repository')}</label>
