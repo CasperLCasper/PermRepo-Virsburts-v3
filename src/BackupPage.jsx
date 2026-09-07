@@ -40,6 +40,16 @@ function BackupPage() {
     const [currentFiles, setCurrentFiles] = useState([]);
     const [currentJobId, setCurrentJobId] = useState(null);
     const [nftInfo, setNftInfo] = useState({ tokenId: null, backupCount: null, lastManifest: null, lastMerkleRoot: null });
+    
+    // ✅ Oriģinālie mainīgie:
+    const [masterKey, setMasterKey] = useState(null);
+    const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState({});
+    const [currentPreviousHistory, setCurrentPreviousHistory] = useState([]);
+    const [currentPreviousManifestId, setCurrentPreviousManifestId] = useState(null);
+    const [currentPreviousBackupNumber, setCurrentPreviousBackupNumber] = useState(null);
+    const [currentPreviousEncryptionIVs, setCurrentPreviousEncryptionIVs] = useState({});
+    const [currentMerkleRoot, setCurrentMerkleRoot] = useState(null);
+    const [currentIV, setCurrentIV] = useState(null);
 
     const t = useCallback((key) => {
         return translations[currentLanguage]?.[key] || translations.lv[key] || key;
@@ -253,10 +263,33 @@ function BackupPage() {
                 lastMerkleRoot: lastMerkleRoot || 'Nav'
             });
             
-            console.log('=== NFT INFO ===');
-            console.log('NFT adrese:', config.nftAddress);
-            console.log('Token ID:', tokenIdResult.toString());
-            console.log('Backup count:', backupCount.toString());
+            // ✅ Iegūst iepriekšējo manifestu, ja tāds ir:
+            if (backupCount > 0n && lastManifest && lastManifest.startsWith('ar://')) {
+                const prevManifestId = lastManifest.slice(5);
+                setCurrentPreviousManifestId(prevManifestId);
+                try {
+                    const manifestResponse = await fetch(`${config.arweaveGateway}/raw/${encodeURIComponent(prevManifestId)}`);
+                    if (manifestResponse.ok) {
+                        const prevManifest = await manifestResponse.json();
+                        if (prevManifest && typeof prevManifest.paths === 'object') {
+                            setCurrentUnchangedFiles(prevManifest.paths);
+                        }
+                        if (Array.isArray(prevManifest?.history)) {
+                            setCurrentPreviousHistory(prevManifest.history);
+                        }
+                        if (prevManifest?.metadata?.backupNumber !== undefined) {
+                            setCurrentPreviousBackupNumber(prevManifest.metadata.backupNumber);
+                        }
+                        if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
+                            setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
+                        }
+                        console.log('✅ Iepriekšējais manifests ielādēts!');
+                        console.log('Previous paths:', Object.keys(prevManifest.paths).length, 'faili');
+                    }
+                } catch (manifestError) {
+                    console.warn('⚠️ Neizdevās ielādēt iepriekšējo manifestu:', manifestError.message);
+                }
+            }
             
             setStatus('✅ Maks savienots: ' + address);
             
@@ -302,59 +335,86 @@ function BackupPage() {
         setError('');
         
         try {
+            // ✅ Pārbauda master key:
+            const backupCount = Number(nftInfo.backupCount || 0);
+            if (backupCount === 0) {
+                const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+                const newKey = ethers.hexlify(keyBytes);
+                setMasterKey(newKey);
+                await showMasterKey(newKey);
+            } else {
+                const enteredKey = await promptMasterKey();
+                if (!isValidMasterKey(enteredKey)) {
+                    setError(t('encrypted-required'));
+                    setIsWorking(false);
+                    return;
+                }
+                setMasterKey(enteredKey);
+            }
+            
+            // ✅ Saņem failus no servera:
             const result = await apiJson('/api/prepare-backup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ repoName, walletAddress: userAddress })
             });
             
-            setCurrentFiles(result.files || []);
+            const files = result.files || [];
+            setCurrentFiles(files);
             setCurrentJobId(result.jobId);
             
             console.log('=== PREPARE BACKUP ===');
-            console.log('Failu skaits:', result.files ? result.files.length : 0);
+            console.log('Failu skaits:', files.length);
             
-            if (!result.files || result.files.length === 0) {
+            if (files.length === 0) {
                 setStatus(`✅ ${t('no-changes')}`);
                 setIsWorking(false);
                 return;
             }
             
-            const sizeText = formatFileSize(result.totalBytes || 0);
-            setStatus(`📄 ${t('files-count')}: ${result.files.length}\n📄 ${t('files-size')}: ${sizeText}`);
+            // ✅ Inkrementālie backupi - salīdzina ar iepriekšējo manifestu:
+            const changedFiles = [];
+            const unchangedFiles = {};
             
-            await uploadZip(result.jobId, result.files);
+            for (const file of files) {
+                const previousFile = currentUnchangedFiles[file.path];
+                if (previousFile && previousFile.hash && previousFile.hash === file.hash) {
+                    unchangedFiles[file.path] = { id: previousFile.id || previousFile.zipId, hash: file.hash };
+                } else {
+                    changedFiles.push(file);
+                }
+            }
+            
+            console.log('Mainītie faili:', changedFiles.length);
+            console.log('Nemainītie faili:', Object.keys(unchangedFiles).length);
+            
+            if (changedFiles.length === 0) {
+                setStatus(`✅ ${t('no-changes')}`);
+                setIsWorking(false);
+                return;
+            }
+            
+            const sizeText = formatFileSize(
+                changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
+            );
+            setStatus(`📄 ${t('files-count')}: ${changedFiles.length}\n📄 ${t('files-size')}: ${sizeText}`);
+            
+            await uploadZip(result.jobId, changedFiles, unchangedFiles);
             
         } catch (e) {
             setError(e.message);
             setIsWorking(false);
         }
-    }, [apiJson, repoName, userAddress, t, formatFileSize]);
+    }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey]);
 
-    const uploadZip = useCallback(async (jobId, files) => {
+    const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles) => {
         setStatus(`⏳ ${t('creating-zip')}`);
         
         try {
-            const backupCount = Number(nftInfo.backupCount || 0);
-            let masterKey;
-            if (backupCount === 0) {
-                const keyBytes = crypto.getRandomValues(new Uint8Array(32));
-                masterKey = ethers.hexlify(keyBytes);
-                await showMasterKey(masterKey);
-            } else {
-                masterKey = await promptMasterKey();
-            }
-            
-            if (!isValidMasterKey(masterKey)) {
-                setError(t('encrypted-required'));
-                setIsWorking(false);
-                return;
-            }
-            
-            console.log('=== ZIP IZVEIDE ===');
+            console.log('=== ZIP IZVEIDE (TIKAI MAINĪTIE FAILI) ===');
             
             const zip = new JSZip();
-            for (const file of files) {
+            for (const file of changedFiles) {
                 const binaryString = atob(file.content);
                 const fileBuffer = new Uint8Array(binaryString.length);
                 for (let j = 0; j < binaryString.length; j++) {
@@ -369,17 +429,17 @@ function BackupPage() {
                 compressionOptions: { level: 6 }
             });
             
-            console.log('ZIP izmērs:', zipBuffer.length);
+            console.log('ZIP izmērs (tikai mainītie):', zipBuffer.length);
             
             setStatus(`⏳ ${t('encrypting')}`);
             
             const encrypted = await encryptData(zipBuffer, masterKey);
             const encryptedZipData = encrypted.encrypted;
             const iv = encrypted.iv;
-            const merkleRoot = calculateMerkleRoot(files);
-            const fileMetadata = files.map(file => ({ path: file.path, hash: file.hash }));
+            const merkleRoot = calculateMerkleRoot(changedFiles);
             
-            console.log('Šifrēto datu izmērs:', encryptedZipData.length);
+            setCurrentIV(iv);
+            setCurrentMerkleRoot(merkleRoot);
             
             setStatus(`⏳ ${t('uploading')}`);
             
@@ -415,15 +475,49 @@ function BackupPage() {
             
             setStatus(`⏳ ${t('manifest-ready')}`);
             
+            // ✅ Manifest ar VĒSTURI un IVs:
+            const history = [...currentPreviousHistory];
+            if (currentPreviousManifestId) {
+                const alreadyExists = history.some(entry => entry && entry.manifestId === currentPreviousManifestId);
+                if (!alreadyExists) {
+                    history.push({
+                        backupNumber: currentPreviousBackupNumber || history.length,
+                        manifestId: currentPreviousManifestId,
+                        url: `${config.arweaveGateway}/raw/${encodeURIComponent(currentPreviousManifestId)}`
+                    });
+                }
+            }
+            history.sort((a, b) => Number(b?.backupNumber || 0) - Number(a?.backupNumber || 0));
+            
+            const encryptionIVs = { ...currentPreviousEncryptionIVs };
+            if (iv && iv.length === 12) {
+                encryptionIVs[zipTxId] = Array.from(iv);
+            }
+            
             const manifest = {
                 manifest: 'arweave/paths',
                 version: '0.2.0',
-                index: { path: files[0]?.path || 'README.md' },
-                paths: {}
+                encryption: { ivs: encryptionIVs },
+                archive: {
+                    id: zipTxId,
+                    url: `${config.arweaveGateway}/raw/${encodeURIComponent(zipTxId)}`,
+                    contains: changedFiles.map(file => ({ path: file.path, hash: file.hash }))
+                },
+                paths: {},
+                history
             };
             
-            for (const file of files) {
-                manifest.paths[file.path] = { id: zipTxId };
+            for (const file of changedFiles) {
+                manifest.paths[file.path] = { id: zipTxId, hash: file.hash };
+            }
+            
+            for (const [filePath, info] of Object.entries(unchangedFiles)) {
+                manifest.paths[filePath] = { id: info.id, hash: info.hash };
+            }
+            
+            const manifestPaths = Object.keys(manifest.paths);
+            if (manifestPaths.length > 0) {
+                manifest.index = { path: manifest.paths['README.md'] ? 'README.md' : manifestPaths[0] };
             }
             
             const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
@@ -457,27 +551,16 @@ function BackupPage() {
             
             setStatus(`⏳ ${t('signing')}`);
             
-            console.log('=== NFT IZSAUKUMA DIAGNOSTIKA ===');
-            console.log('config.nftAddress:', config.nftAddress);
-            console.log('tokenId:', tokenId);
-            console.log('tokenId tips:', typeof tokenId);
-            console.log('tokenId BigInt:', tokenId ? BigInt(tokenId).toString() : 'NAV');
+            console.log('=== NFT IZSAUKUMS ===');
+            console.log('tokenId:', nftInfo.tokenId);
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const deadline = Math.floor(Date.now() / 1000) + 600;
-            const currentNonce = await readContract.getNonce(tokenId);
-            const onChainBackupCount = await readContract.getBackupCount(tokenId);
+            const currentNonce = await readContract.getNonce(BigInt(nftInfo.tokenId));
+            const onChainBackupCount = await readContract.getBackupCount(BigInt(nftInfo.tokenId));
             const manifestURI = `ar://${manifestTxId}`;
             const manifestHash = ethers.keccak256(ethers.toUtf8Bytes(manifestURI));
-            
-            console.log('currentNonce:', currentNonce.toString());
-            console.log('onChainBackupCount:', onChainBackupCount.toString());
-            console.log('manifestURI:', manifestURI);
-            console.log('manifestHash:', manifestHash);
-            console.log('merkleRoot:', merkleRoot);
-            console.log('deadline:', deadline);
-            console.log('signer:', signer ? 'IR' : 'NAV');
             
             const domain = { name: 'PermRepo', version: '1', chainId: Number(config.chainId), verifyingContract: config.nftAddress };
             const types = {
@@ -491,7 +574,7 @@ function BackupPage() {
                 ]
             };
             const value = {
-                tokenId: BigInt(tokenId),
+                tokenId: BigInt(nftInfo.tokenId),
                 backupNumber: onChainBackupCount + 1n,
                 manifestHash,
                 merkleRoot,
@@ -499,21 +582,11 @@ function BackupPage() {
                 nonce: currentNonce
             };
             
-            console.log('=== PARAKSTS ===');
             const signature = await signer.signTypedData(domain, types, value);
-            console.log('Signature garums:', signature.length);
-            console.log('Signature:', signature.substring(0, 30) + '...');
             
-            console.log('=== NFT IZSAUKUMS ===');
-            
-            // ✅ Izmanto tiešu izsaukumu ar signer:
             const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, signer);
-            
-            console.log('nftWrite:', nftWrite ? 'IR' : 'NAV');
-            console.log('nftWrite.addBackup:', nftWrite.addBackup ? 'IR' : 'NAV');
-            
             const tx = await nftWrite.addBackup(
-                BigInt(tokenId),
+                BigInt(nftInfo.tokenId),
                 manifestHash,
                 merkleRoot,
                 manifestURI,
@@ -521,15 +594,20 @@ function BackupPage() {
                 signature
             );
             
-            console.log('TX objekts:', tx ? 'IR' : 'NAV');
-            console.log('TX tips:', typeof tx);
-            
             if (tx && tx.wait) {
                 await tx.wait();
-                console.log('✅ NFT izsaukums veiksmīgs! TX:', tx.hash);
-            } else {
-                console.log('✅ NFT izsaukums veiksmīgs (nav wait)!');
             }
+            
+            console.log('✅ NFT izsaukums veiksmīgs!');
+            
+            // ✅ ATJAUNINA NFT info:
+            const newBackupCount = onChainBackupCount + 1n;
+            setNftInfo({
+                tokenId: nftInfo.tokenId,
+                backupCount: newBackupCount.toString(),
+                lastManifest: manifestURI,
+                lastMerkleRoot: merkleRoot
+            });
             
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
@@ -539,7 +617,6 @@ function BackupPage() {
             console.error('=== KĻŪDA ===');
             console.error('Ziņojums:', e.message);
             console.error('Tips:', e.name);
-            console.error('Pilna kļūda:', e);
             
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
@@ -549,7 +626,7 @@ function BackupPage() {
         } finally {
             setIsWorking(false);
         }
-    }, [apiJson, t, turboClient, signer, tokenId, githubUser, repoName, config, nftInfo.backupCount, showMasterKey, promptMasterKey, isValidMasterKey, encryptData, calculateMerkleRoot]);
+    }, [apiJson, t, turboClient, signer, githubUser, repoName, config, masterKey, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, currentMerkleRoot, currentIV, nftInfo.tokenId, calculateMerkleRoot, encryptData]);
 
     if (!config) {
         return (
