@@ -41,8 +41,6 @@ function BackupPage() {
     const [currentJobId, setCurrentJobId] = useState(null);
     const [nftInfo, setNftInfo] = useState({ tokenId: null, backupCount: null, lastManifest: null, lastMerkleRoot: null });
     
-    // ✅ Oriģinālie mainīgie:
-    const [masterKey, setMasterKey] = useState(null);
     const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState({});
     const [currentPreviousHistory, setCurrentPreviousHistory] = useState([]);
     const [currentPreviousManifestId, setCurrentPreviousManifestId] = useState(null);
@@ -263,7 +261,6 @@ function BackupPage() {
                 lastMerkleRoot: lastMerkleRoot || 'Nav'
             });
             
-            // ✅ Iegūst iepriekšējo manifestu, ja tāds ir:
             if (backupCount > 0n && lastManifest && lastManifest.startsWith('ar://')) {
                 const prevManifestId = lastManifest.slice(5);
                 setCurrentPreviousManifestId(prevManifestId);
@@ -335,21 +332,21 @@ function BackupPage() {
         setError('');
         
         try {
-            // ✅ Pārbauda master key:
+            // ✅ Iegūst vai prasa Master Key:
             const backupCount = Number(nftInfo.backupCount || 0);
+            let keyHex;
+            
             if (backupCount === 0) {
                 const keyBytes = crypto.getRandomValues(new Uint8Array(32));
-                const newKey = ethers.hexlify(keyBytes);
-                setMasterKey(newKey);
-                await showMasterKey(newKey);
+                keyHex = ethers.hexlify(keyBytes);
+                await showMasterKey(keyHex);
             } else {
-                const enteredKey = await promptMasterKey();
-                if (!isValidMasterKey(enteredKey)) {
+                keyHex = await promptMasterKey();
+                if (!isValidMasterKey(keyHex)) {
                     setError(t('encrypted-required'));
                     setIsWorking(false);
                     return;
                 }
-                setMasterKey(enteredKey);
             }
             
             // ✅ Saņem failus no servera:
@@ -372,7 +369,7 @@ function BackupPage() {
                 return;
             }
             
-            // ✅ Inkrementālie backupi - salīdzina ar iepriekšējo manifestu:
+            // ✅ Inkrementālie backupi:
             const changedFiles = [];
             const unchangedFiles = {};
             
@@ -399,7 +396,8 @@ function BackupPage() {
             );
             setStatus(`📄 ${t('files-count')}: ${changedFiles.length}\n📄 ${t('files-size')}: ${sizeText}`);
             
-            await uploadZip(result.jobId, changedFiles, unchangedFiles);
+            // ✅ Nodod keyHex TIEŠI kā parametru:
+            await uploadZip(result.jobId, changedFiles, unchangedFiles, keyHex);
             
         } catch (e) {
             setError(e.message);
@@ -407,7 +405,7 @@ function BackupPage() {
         }
     }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey]);
 
-    const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles) => {
+    const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex) => {
         setStatus(`⏳ ${t('creating-zip')}`);
         
         try {
@@ -433,7 +431,8 @@ function BackupPage() {
             
             setStatus(`⏳ ${t('encrypting')}`);
             
-            const encrypted = await encryptData(zipBuffer, masterKey);
+            // ✅ Izmanto keyHex parametru, nevis state:
+            const encrypted = await encryptData(zipBuffer, keyHex);
             const encryptedZipData = encrypted.encrypted;
             const iv = encrypted.iv;
             const merkleRoot = calculateMerkleRoot(changedFiles);
@@ -475,7 +474,6 @@ function BackupPage() {
             
             setStatus(`⏳ ${t('manifest-ready')}`);
             
-            // ✅ Manifest ar VĒSTURI un IVs:
             const history = [...currentPreviousHistory];
             if (currentPreviousManifestId) {
                 const alreadyExists = history.some(entry => entry && entry.manifestId === currentPreviousManifestId);
@@ -600,7 +598,6 @@ function BackupPage() {
             
             console.log('✅ NFT izsaukums veiksmīgs!');
             
-            // ✅ ATJAUNINA NFT info:
             const newBackupCount = onChainBackupCount + 1n;
             setNftInfo({
                 tokenId: nftInfo.tokenId,
@@ -626,7 +623,7 @@ function BackupPage() {
         } finally {
             setIsWorking(false);
         }
-    }, [apiJson, t, turboClient, signer, githubUser, repoName, config, masterKey, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, currentMerkleRoot, currentIV, nftInfo.tokenId, calculateMerkleRoot, encryptData]);
+    }, [apiJson, t, turboClient, signer, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData]);
 
     if (!config) {
         return (
