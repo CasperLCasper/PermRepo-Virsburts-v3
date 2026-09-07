@@ -223,17 +223,8 @@ function BackupPage() {
             try {
                 const balanceResult = await client.getBalance();
                 console.log('💰 Kredītu bilance (winc):', balanceResult.winc);
-                console.log('💰 Kredītu bilance (string):', balanceResult.winc.toString());
             } catch (balanceError) {
                 console.error('❌ Bilances kļūda:', balanceError.message);
-            }
-            
-            console.log('=== BEZMAKSAS LIMITA PĀRBAUDE ===');
-            try {
-                const freeStatus = await client.getFreeStatus();
-                console.log('📊 Bezmaksas atlikums (bytes):', freeStatus.bytesRemaining);
-            } catch (freeError) {
-                console.error('❌ Bezmaksas limita kļūda:', freeError.message);
             }
             
             const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
@@ -261,6 +252,11 @@ function BackupPage() {
                 lastManifest: lastManifest || 'Nav',
                 lastMerkleRoot: lastMerkleRoot || 'Nav'
             });
+            
+            console.log('=== NFT INFO ===');
+            console.log('NFT adrese:', config.nftAddress);
+            console.log('Token ID:', tokenIdResult.toString());
+            console.log('Backup count:', backupCount.toString());
             
             setStatus('✅ Maks savienots: ' + address);
             
@@ -388,7 +384,6 @@ function BackupPage() {
             setStatus(`⏳ ${t('uploading')}`);
             
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
-            console.log('Blob izmērs:', zipBlob.size);
             
             const zipResult = await turboClient.uploadFile({
                 fileStreamFactory: () => zipBlob.stream(),
@@ -462,6 +457,12 @@ function BackupPage() {
             
             setStatus(`⏳ ${t('signing')}`);
             
+            console.log('=== NFT IZSAUKUMA DIAGNOSTIKA ===');
+            console.log('config.nftAddress:', config.nftAddress);
+            console.log('tokenId:', tokenId);
+            console.log('tokenId tips:', typeof tokenId);
+            console.log('tokenId BigInt:', tokenId ? BigInt(tokenId).toString() : 'NAV');
+            
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const deadline = Math.floor(Date.now() / 1000) + 600;
@@ -469,6 +470,14 @@ function BackupPage() {
             const onChainBackupCount = await readContract.getBackupCount(tokenId);
             const manifestURI = `ar://${manifestTxId}`;
             const manifestHash = ethers.keccak256(ethers.toUtf8Bytes(manifestURI));
+            
+            console.log('currentNonce:', currentNonce.toString());
+            console.log('onChainBackupCount:', onChainBackupCount.toString());
+            console.log('manifestURI:', manifestURI);
+            console.log('manifestHash:', manifestHash);
+            console.log('merkleRoot:', merkleRoot);
+            console.log('deadline:', deadline);
+            console.log('signer:', signer ? 'IR' : 'NAV');
             
             const domain = { name: 'PermRepo', version: '1', chainId: Number(config.chainId), verifyingContract: config.nftAddress };
             const types = {
@@ -490,13 +499,37 @@ function BackupPage() {
                 nonce: currentNonce
             };
             
+            console.log('=== PARAKSTS ===');
             const signature = await signer.signTypedData(domain, types, value);
+            console.log('Signature garums:', signature.length);
+            console.log('Signature:', signature.substring(0, 30) + '...');
             
+            console.log('=== NFT IZSAUKUMS ===');
+            
+            // ✅ Izmanto tiešu izsaukumu ar signer:
             const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, signer);
-            const tx = await nftWrite.addBackup(tokenId, manifestHash, merkleRoot, manifestURI, deadline, signature);
-            await tx.wait();
             
-            console.log('✅ NFT izsaukums veiksmīgs! TX:', tx.hash);
+            console.log('nftWrite:', nftWrite ? 'IR' : 'NAV');
+            console.log('nftWrite.addBackup:', nftWrite.addBackup ? 'IR' : 'NAV');
+            
+            const tx = await nftWrite.addBackup(
+                BigInt(tokenId),
+                manifestHash,
+                merkleRoot,
+                manifestURI,
+                BigInt(deadline),
+                signature
+            );
+            
+            console.log('TX objekts:', tx ? 'IR' : 'NAV');
+            console.log('TX tips:', typeof tx);
+            
+            if (tx && tx.wait) {
+                await tx.wait();
+                console.log('✅ NFT izsaukums veiksmīgs! TX:', tx.hash);
+            } else {
+                console.log('✅ NFT izsaukums veiksmīgs (nav wait)!');
+            }
             
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
@@ -506,6 +539,7 @@ function BackupPage() {
             console.error('=== KĻŪDA ===');
             console.error('Ziņojums:', e.message);
             console.error('Tips:', e.name);
+            console.error('Pilna kļūda:', e);
             
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
