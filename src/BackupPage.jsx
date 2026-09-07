@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import JSZip from 'jszip';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { translations } from './translations';
-import { TurboFactory, OnDemandFunding } from '@ardrive/turbo-sdk/web';
+import { TurboFactory } from '@ardrive/turbo-sdk/web';
 import { InjectedEthereumSigner } from '@dha-team/arbundles';
 
 const NFT_ABI = [
@@ -219,6 +219,23 @@ function BackupPage() {
             });
             setTurboClient(client);
             
+            console.log('=== KREDĪTU PĀRBAUDE ===');
+            try {
+                const balanceResult = await client.getBalance();
+                console.log('💰 Kredītu bilance (winc):', balanceResult.winc);
+                console.log('💰 Kredītu bilance (string):', balanceResult.winc.toString());
+            } catch (balanceError) {
+                console.error('❌ Bilances kļūda:', balanceError.message);
+            }
+            
+            console.log('=== BEZMAKSAS LIMITA PĀRBAUDE ===');
+            try {
+                const freeStatus = await client.getFreeStatus();
+                console.log('📊 Bezmaksas atlikums (bytes):', freeStatus.bytesRemaining);
+            } catch (freeError) {
+                console.error('❌ Bezmaksas limita kļūda:', freeError.message);
+            }
+            
             const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const fullRepoName = `${githubUser}/${repoName}`;
             const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
@@ -373,7 +390,6 @@ function BackupPage() {
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             console.log('Blob izmērs:', zipBlob.size);
             
-            // ✅ OnDemandFunding - automātiska kredītu pirkšana!
             const zipResult = await turboClient.uploadFile({
                 fileStreamFactory: () => zipBlob.stream(),
                 fileSizeFactory: () => zipBlob.size,
@@ -389,11 +405,7 @@ function BackupPage() {
                 },
                 chunkByteCount: 5 * 1024 * 1024,
                 maxChunkConcurrency: 3,
-                chunkingMode: 'auto',
-                fundingMode: new OnDemandFunding({
-                    maxTokenAmount: ethers.parseEther('0.01'),
-                    topUpBufferMultiplier: 1.1
-                })
+                chunkingMode: 'auto'
             });
             
             console.log('✅ ZIP augšupielādēts! ID:', zipResult.id);
@@ -435,11 +447,7 @@ function BackupPage() {
                 },
                 chunkByteCount: 5 * 1024 * 1024,
                 maxChunkConcurrency: 3,
-                chunkingMode: 'auto',
-                fundingMode: new OnDemandFunding({
-                    maxTokenAmount: ethers.parseEther('0.01'),
-                    topUpBufferMultiplier: 1.1
-                })
+                chunkingMode: 'auto'
             });
             
             console.log('✅ Manifests augšupielādēts! ID:', manifestResult.id);
