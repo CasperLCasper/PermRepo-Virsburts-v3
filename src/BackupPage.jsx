@@ -189,6 +189,7 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
+    // ✅ renderStatusFromData - izmanto t() no konteksta (sinhroni):
     const renderStatusFromData = useCallback(() => {
         if (backupCompleted) {
             return;
@@ -219,9 +220,10 @@ function BackupPage() {
         }
     }, [backupCompleted, lastStatusData, t]);
 
+    // ✅ Atjaunina statusu, kad valoda mainās:
     useEffect(() => {
         renderStatusFromData();
-    }, [currentLanguage]);
+    }, [currentLanguage, renderStatusFromData]);
 
     const connectWallet = useCallback(async () => {
         try {
@@ -308,7 +310,7 @@ function BackupPage() {
             setWalletConnected(true);
             
             setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`);
-            setLastStatusData({ type: 'success', key: 'wallet-connected' });
+            setLastStatusData({ type: 'success', key: 'wallet-connected', address: address });
             
         } catch (e) {
             setError(e.message);
@@ -412,6 +414,7 @@ function BackupPage() {
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
             
+            // ✅ PARĀDA MAINĪTO FAILU SKAITU un SAGLABĀ datus:
             setStatus(
                 `${icon('fails')} ${t('files-count')}: ${changedFiles.length}\n` +
                 `${icon('fails')} ${t('files-size')}: ${sizeText}`
