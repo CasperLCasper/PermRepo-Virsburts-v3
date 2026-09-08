@@ -16,7 +16,6 @@ const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external"
 ];
 
-// ✅ PAREIZĀ icon() funkcija - atgriež HTML (kā oriģinālā):
 function icon(name) {
     return `<img src="/icons/${name}.svg" class="icon-inline">`;
 }
@@ -51,12 +50,11 @@ function BackupPage() {
     const [currentMerkleRoot, setCurrentMerkleRoot] = useState(null);
     const [currentIV, setCurrentIV] = useState(null);
     
-    // ✅ Statusa dati valodas maiņai:
     const [lastStatusData, setLastStatusData] = useState(null);
 
-    const t = useCallback((key) => {
-        return translations[currentLanguage]?.[key] || translations.lv[key] || key;
-    }, [currentLanguage]);
+    const getT = useCallback((lang) => {
+        return (key) => translations[lang]?.[key] || translations.lv[key] || key;
+    }, []);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -104,17 +102,17 @@ function BackupPage() {
             const box = document.createElement('div');
             box.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;max-width:480px;width:100%;box-sizing:border-box;';
             const title = document.createElement('h2');
-            title.textContent = t('key-title');
+            title.textContent = getT(currentLanguage)('key-title');
             title.style.cssText = 'color:#79c0ff;margin-bottom:16px;';
             const input = document.createElement('input');
             input.type = 'password';
-            input.placeholder = t('enter-key');
+            input.placeholder = getT(currentLanguage)('enter-key');
             input.style.cssText = 'width:100%;padding:12px;background:#0d1117;border:1px solid #30363d;border-radius:8px;color:#e6edf3;font-size:16px;margin-bottom:16px;box-sizing:border-box;';
             const confirmButton = document.createElement('button');
-            confirmButton.textContent = t('confirm-key');
+            confirmButton.textContent = getT(currentLanguage)('confirm-key');
             confirmButton.style.cssText = 'width:100%;padding:12px;background:#238636;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;';
             const cancelButton = document.createElement('button');
-            cancelButton.textContent = t('cancel');
+            cancelButton.textContent = getT(currentLanguage)('cancel');
             cancelButton.style.cssText = 'width:100%;padding:12px;background:#30363d;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-top:8px;';
             box.appendChild(title);
             box.appendChild(input);
@@ -138,7 +136,7 @@ function BackupPage() {
             });
             input.focus();
         });
-    }, [t]);
+    }, [currentLanguage, getT]);
 
     const showMasterKey = useCallback((keyToShow) => {
         return new Promise(resolve => {
@@ -147,22 +145,22 @@ function BackupPage() {
             const box = document.createElement('div');
             box.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;max-width:480px;width:100%;box-sizing:border-box;';
             const title = document.createElement('h2');
-            title.textContent = t('key-title');
+            title.textContent = getT(currentLanguage)('key-title');
             title.style.cssText = 'color:#79c0ff;margin-bottom:16px;';
             const description = document.createElement('p');
-            description.textContent = t('key-description');
+            description.textContent = getT(currentLanguage)('key-description');
             description.style.cssText = 'color:#b0b8c4;margin-bottom:16px;';
             const keyBox = document.createElement('div');
             keyBox.textContent = keyToShow;
             keyBox.style.cssText = 'background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:16px;word-break:break-all;font-family:monospace;color:#e6edf3;';
             const copyButton = document.createElement('button');
-            copyButton.textContent = t('copy-key');
+            copyButton.textContent = getT(currentLanguage)('copy-key');
             copyButton.style.cssText = 'width:100%;padding:12px;background:#238636;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-bottom:8px;';
             const downloadButton = document.createElement('button');
-            downloadButton.textContent = t('download-key');
+            downloadButton.textContent = getT(currentLanguage)('download-key');
             downloadButton.style.cssText = 'width:100%;padding:12px;background:#21262d;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-bottom:8px;';
             const closeButton = document.createElement('button');
-            closeButton.textContent = t('saving-key');
+            closeButton.textContent = getT(currentLanguage)('saving-key');
             closeButton.style.cssText = 'width:100%;padding:12px;background:#f85149;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;';
             box.appendChild(title);
             box.appendChild(description);
@@ -196,10 +194,9 @@ function BackupPage() {
             
             closeButton.onclick = () => { modal.remove(); resolve(); };
         });
-    }, [t, repoName]);
+    }, [currentLanguage, getT, repoName]);
 
-    // ✅ renderStatusFromData - TIEŠI kā oriģinālā:
-    const renderStatusFromData = useCallback(() => {
+    const renderStatusFromData = useCallback((lang) => {
         if (backupCompleted) {
             return;
         }
@@ -207,29 +204,29 @@ function BackupPage() {
         if (!lastStatusData) return;
         
         const data = lastStatusData;
+        const tLang = getT(lang);
         
         switch(data.type) {
             case 'files':
                 setStatus(
-                    `${icon('fails')} ${t('files-count')}: ${data.fileCount}\n` +
-                    `${icon('fails')} ${t('files-size')}: ${data.fileSizeText}`
+                    `${icon('fails')} ${tLang('files-count')}: ${data.fileCount}\n` +
+                    `${icon('fails')} ${tLang('files-size')}: ${data.fileSizeText}`
                 );
                 break;
             case 'uploading':
-                setStatus(`${icon('upload')} ${t('uploading')}`);
+                setStatus(`${icon('upload')} ${tLang('uploading')}`);
                 break;
             case 'success':
-                setStatus(`${icon('izdevas-veiksmigi')} ${t(data.key)}`);
+                setStatus(`${icon('izdevas-veiksmigi')} ${tLang(data.key)}`);
                 break;
             case 'simple':
-                setStatus(t(data.key));
+                setStatus(tLang(data.key));
                 break;
             default:
-                setStatus(t(data.key));
+                setStatus(tLang(data.key));
         }
-    }, [backupCompleted, lastStatusData, t]);
+    }, [backupCompleted, lastStatusData, getT]);
 
-    // ✅ setStatusWithData - saglabā datus:
     const setStatusWithData = useCallback((message, data = null) => {
         setStatus(message);
         if (data) {
@@ -237,14 +234,12 @@ function BackupPage() {
         }
     }, []);
 
-    // ✅ Valodas maiņa - atjaunina statusu:
     const switchLanguage = useCallback((lang) => {
         setCurrentLanguage(lang);
         localStorage.setItem('permrepo-language', lang);
         
-        // Atjaunina statusu ar jauno valodu:
         setTimeout(() => {
-            renderStatusFromData();
+            renderStatusFromData(lang);
         }, 50);
     }, [renderStatusFromData]);
 
@@ -255,9 +250,8 @@ function BackupPage() {
                 return;
             }
             
-            // ✅ LABOJUMS #1: status mainās tikai pēc VISU darbību:
             setIsWalletConnecting(true);
-            setStatus(`${icon('upload')} ${t('waiting')}`);
+            setStatus(`${icon('upload')} ${getT(currentLanguage)('waiting')}`);
             setError('');
             
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -324,7 +318,6 @@ function BackupPage() {
                 }
             }
             
-            // ✅ Tikai TAGAD iestati VISU:
             setSigner(signerInstance);
             setUserAddress(address);
             setTokenId(tokenIdResult);
@@ -339,7 +332,7 @@ function BackupPage() {
             setIsWalletConnecting(false);
             
             setStatusWithData(
-                `${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`,
+                `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('wallet-connected')}: ${address}`,
                 { type: 'success', key: 'wallet-connected' }
             );
             
@@ -347,7 +340,7 @@ function BackupPage() {
             setIsWalletConnecting(false);
             setError(e.message);
         }
-    }, [config, githubUser, repoName, t, setStatusWithData]);
+    }, [config, githubUser, repoName, currentLanguage, getT, setStatusWithData]);
 
     useEffect(() => {
         const initPage = async () => {
@@ -381,15 +374,14 @@ function BackupPage() {
     }, []);
 
     const prepareBackup = useCallback(async () => {
-        // ✅ LABOJUMS #2: Ja maks NAV savienots, parāda ziņojumu:
         if (!walletConnected || !turboClient) {
-            setError('Vispirms savieno maku!');
+            setError(getT(currentLanguage)('connect-wallet'));
             return;
         }
         
         setIsWorking(true);
         setStatusWithData(
-            `${icon('upload')} ${t('preparing')}`,
+            `${icon('upload')} ${getT(currentLanguage)('preparing')}`,
             { type: 'simple', key: 'preparing' }
         );
         setError('');
@@ -405,7 +397,7 @@ function BackupPage() {
             } else {
                 keyHex = await promptMasterKey();
                 if (!isValidMasterKey(keyHex)) {
-                    setError(t('encrypted-required'));
+                    setError(getT(currentLanguage)('encrypted-required'));
                     setIsWorking(false);
                     return;
                 }
@@ -423,7 +415,7 @@ function BackupPage() {
             
             if (files.length === 0) {
                 setStatusWithData(
-                    `${icon('izdevas-veiksmigi')} ${t('no-changes')}`,
+                    `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('no-changes')}`,
                     { type: 'simple', key: 'no-changes' }
                 );
                 setIsWorking(false);
@@ -444,7 +436,7 @@ function BackupPage() {
             
             if (changedFiles.length === 0) {
                 setStatusWithData(
-                    `${icon('izdevas-veiksmigi')} ${t('no-changes')}`,
+                    `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('no-changes')}`,
                     { type: 'simple', key: 'no-changes' }
                 );
                 setIsWorking(false);
@@ -455,10 +447,9 @@ function BackupPage() {
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
             
-            // ✅ LABOJUMS #3: Parāda mainīto failu skaitu:
             setStatusWithData(
-                `${icon('fails')} ${t('files-count')}: ${changedFiles.length}\n` +
-                `${icon('fails')} ${t('files-size')}: ${sizeText}`,
+                `${icon('fails')} ${getT(currentLanguage)('files-count')}: ${changedFiles.length}\n` +
+                `${icon('fails')} ${getT(currentLanguage)('files-size')}: ${sizeText}`,
                 { type: 'files', fileCount: changedFiles.length, fileSizeText: sizeText }
             );
             
@@ -468,11 +459,11 @@ function BackupPage() {
             setError(e.message);
             setIsWorking(false);
         }
-    }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, walletConnected, turboClient, setStatusWithData]);
+    }, [apiJson, repoName, userAddress, currentLanguage, getT, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, walletConnected, turboClient, setStatusWithData]);
 
     const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex) => {
         setStatusWithData(
-            `${icon('upload')} ${t('creating-zip')}`,
+            `${icon('upload')} ${getT(currentLanguage)('creating-zip')}`,
             { type: 'simple', key: 'creating-zip' }
         );
         
@@ -494,7 +485,7 @@ function BackupPage() {
             });
             
             setStatusWithData(
-                `${icon('upload')} ${t('encrypting')}`,
+                `${icon('upload')} ${getT(currentLanguage)('encrypting')}`,
                 { type: 'simple', key: 'encrypting' }
             );
             
@@ -507,7 +498,7 @@ function BackupPage() {
             setCurrentMerkleRoot(merkleRoot);
             
             setStatusWithData(
-                `${icon('upload')} ${t('uploading')}`,
+                `${icon('upload')} ${getT(currentLanguage)('uploading')}`,
                 { type: 'uploading' }
             );
             
@@ -540,7 +531,7 @@ function BackupPage() {
             });
             
             setStatusWithData(
-                `${icon('upload')} ${t('manifest-ready')}`,
+                `${icon('upload')} ${getT(currentLanguage)('manifest-ready')}`,
                 { type: 'simple', key: 'manifest-ready' }
             );
             
@@ -616,7 +607,7 @@ function BackupPage() {
             });
             
             setStatusWithData(
-                `${icon('upload')} ${t('signing')}`,
+                `${icon('upload')} ${getT(currentLanguage)('signing')}`,
                 { type: 'simple', key: 'signing' }
             );
             
@@ -675,9 +666,8 @@ function BackupPage() {
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             
-            // ✅ LABOJUMS #4: Saglabā datus valodas maiņai:
             setStatusWithData(
-                `${icon('izdevas-veiksmigi')} ${t('backup-complete')}`,
+                `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('backup-complete')}`,
                 { type: 'success', key: 'backup-complete' }
             );
             
@@ -686,14 +676,14 @@ function BackupPage() {
             console.error('Ziņojums:', e.message);
             
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
-                setError(t('transaction-cancelled'));
+                setError(getT(currentLanguage)('transaction-cancelled'));
             } else {
                 setError(e.message);
             }
         } finally {
             setIsWorking(false);
         }
-    }, [apiJson, t, turboClient, signer, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData, setStatusWithData]);
+    }, [apiJson, currentLanguage, getT, turboClient, signer, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData, setStatusWithData]);
 
     if (!config) {
         return (
@@ -712,25 +702,25 @@ function BackupPage() {
             </div>
             
             <img src="/icons/logo-nosaukums.svg" alt="PermRepo" className="logo-title" />
-            <p className="subtitle">{t('repo-label')}: {repoName || '-'}</p>
+            <p className="subtitle">{getT(currentLanguage)('repo-label')}: {repoName || '-'}</p>
             
             <div className="info-row text-left">
-                <span className="info-label">{t('nft-token')}</span>
+                <span className="info-label">{getT(currentLanguage)('nft-token')}</span>
                 <span className="info-value">{nftInfo.tokenId || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">{t('backup-count')}</span>
+                <span className="info-label">{getT(currentLanguage)('backup-count')}</span>
                 <span className="info-value">{nftInfo.backupCount || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">{t('last-manifest')}</span>
+                <span className="info-label">{getT(currentLanguage)('last-manifest')}</span>
                 <span className="info-value">{nftInfo.lastManifest || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">{t('last-merkle')}</span>
+                <span className="info-label">{getT(currentLanguage)('last-merkle')}</span>
                 <span className="info-value">{nftInfo.lastMerkleRoot || '-'}</span>
             </div>
             
@@ -741,7 +731,7 @@ function BackupPage() {
                     className="sign-button"
                     style={{ marginTop: '20px' }}
                 >
-                    {isWalletConnecting ? '⏳' : '🔗 Savienot maku'}
+                    {isWalletConnecting ? '⏳' : '🔗 ' + getT(currentLanguage)('connect-wallet')}
                 </button>
             ) : (
                 !backupCompleted ? (
@@ -751,7 +741,7 @@ function BackupPage() {
                         className="sign-button"
                         style={{ marginTop: '20px' }}
                     >
-                        {isWorking ? '⏳' : t('start-backup')}
+                        {isWorking ? '⏳' : getT(currentLanguage)('start-backup')}
                     </button>
                 ) : (
                     <button 
@@ -759,7 +749,7 @@ function BackupPage() {
                         className="sign-button"
                         style={{ marginTop: '20px' }}
                     >
-                        {t('back-home')}
+                        {getT(currentLanguage)('back-home')}
                     </button>
                 )
             )}
@@ -770,7 +760,7 @@ function BackupPage() {
                     {backupCompleted && lastManifestTxId && (
                         <div style={{ marginTop: '12px' }}>
                             <span dangerouslySetInnerHTML={{ __html: icon('manifests') }} />
-                            {t('manifest-link')}:{' '}
+                            {getT(currentLanguage)('manifest-link')}:{' '}
                             <a href={`${config.arweaveGateway}/raw/${lastManifestTxId}`} target="_blank" rel="noopener noreferrer">
                                 ar://{lastManifestTxId}
                             </a>
