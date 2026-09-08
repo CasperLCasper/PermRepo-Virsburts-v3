@@ -139,7 +139,6 @@ function App() {
             setReposData(reposWithStatus);
             setWalletConnected(true);
             
-            // ✅ Saglabā DATUS, nevis gatavu ziņojumu:
             setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`);
             setStatusType('success');
             setLastStatusData({ type: 'wallet-connected', address: address });
@@ -176,10 +175,10 @@ function App() {
         }
     }, [config, githubUser, userAddress, connectWallet]);
 
-    // ✅ Atjaunina statusu, kad valoda mainās:
     useEffect(() => {
         if (lastStatusData && lastStatusData.type === 'wallet-connected') {
             setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${lastStatusData.address}`);
+            setStatusType('success');
         }
     }, [currentLanguage, lastStatusData, t]);
 
@@ -363,7 +362,10 @@ function App() {
             )}
             
             {error && (
-                <div className="error" dangerouslySetInnerHTML={{ __html: `${icon('kluda')} ${error}` }} />
+                <div className="error">
+                    <img src={icon('kluda')} className="icon-inline" alt="" style={{ display: 'inline-block', width: '24px', height: '24px', verticalAlign: 'middle', marginRight: '6px' }} />
+                    {error}
+                </div>
             )}
         </div>
     );
