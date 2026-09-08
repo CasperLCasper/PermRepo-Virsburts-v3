@@ -16,8 +16,9 @@ const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external"
 ];
 
+// ✅ PAREIZĀ icon() funkcija - atgriež HTML (kā oriģinālā):
 function icon(name) {
-    return `/icons/${name}.svg`;
+    return `<img src="/icons/${name}.svg" class="icon-inline">`;
 }
 
 function BackupPage() {
@@ -34,7 +35,6 @@ function BackupPage() {
     const [walletConnected, setWalletConnected] = useState(false);
     const [isWalletConnecting, setIsWalletConnecting] = useState(false);
     const [status, setStatus] = useState('');
-    const [statusType, setStatusType] = useState('progress');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
     const [backupCompleted, setBackupCompleted] = useState(false);
@@ -51,7 +51,7 @@ function BackupPage() {
     const [currentMerkleRoot, setCurrentMerkleRoot] = useState(null);
     const [currentIV, setCurrentIV] = useState(null);
     
-    // ✅ Statusa dati valodas maiņai (kā oriģinālajā kodā):
+    // ✅ Statusa dati valodas maiņai:
     const [lastStatusData, setLastStatusData] = useState(null);
 
     const t = useCallback((key) => {
@@ -198,7 +198,7 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
-    // ✅ renderStatusFromData - kā oriģinālajā kodā:
+    // ✅ renderStatusFromData - TIEŠI kā oriģinālā:
     const renderStatusFromData = useCallback(() => {
         if (backupCompleted) {
             return;
@@ -214,36 +214,30 @@ function BackupPage() {
                     `${icon('fails')} ${t('files-count')}: ${data.fileCount}\n` +
                     `${icon('fails')} ${t('files-size')}: ${data.fileSizeText}`
                 );
-                setStatusType('progress');
                 break;
             case 'uploading':
                 setStatus(`${icon('upload')} ${t('uploading')}`);
-                setStatusType('progress');
                 break;
             case 'success':
                 setStatus(`${icon('izdevas-veiksmigi')} ${t(data.key)}`);
-                setStatusType('success');
                 break;
             case 'simple':
                 setStatus(t(data.key));
-                setStatusType(data.statusType || 'progress');
                 break;
             default:
                 setStatus(t(data.key));
-                setStatusType(data.statusType || 'progress');
         }
     }, [backupCompleted, lastStatusData, t]);
 
-    // ✅ setStatusWithData - saglabā datus valodas maiņai:
-    const setStatusWithData = useCallback((message, type, data = null) => {
+    // ✅ setStatusWithData - saglabā datus:
+    const setStatusWithData = useCallback((message, data = null) => {
         setStatus(message);
-        setStatusType(type);
         if (data) {
             setLastStatusData(data);
         }
     }, []);
 
-    // ✅ Valodas maiņa ar statusa atjaunināšanu:
+    // ✅ Valodas maiņa - atjaunina statusu:
     const switchLanguage = useCallback((lang) => {
         setCurrentLanguage(lang);
         localStorage.setItem('permrepo-language', lang);
@@ -251,7 +245,7 @@ function BackupPage() {
         // Atjaunina statusu ar jauno valodu:
         setTimeout(() => {
             renderStatusFromData();
-        }, 0);
+        }, 50);
     }, [renderStatusFromData]);
 
     const connectWallet = useCallback(async () => {
@@ -261,10 +255,9 @@ function BackupPage() {
                 return;
             }
             
-            // ✅ LABOJUMS #1: Status mainās tikai pēc VISU darbību pabeigšanas:
+            // ✅ LABOJUMS #1: status mainās tikai pēc VISU darbību:
             setIsWalletConnecting(true);
-            setStatus('⏳ Savieno maku...');
-            setStatusType('progress');
+            setStatus(`${icon('upload')} ${t('waiting')}`);
             setError('');
             
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -331,7 +324,7 @@ function BackupPage() {
                 }
             }
             
-            // ✅ TIKAI TAGAD iestati VISU stāvokli:
+            // ✅ Tikai TAGAD iestati VISU:
             setSigner(signerInstance);
             setUserAddress(address);
             setTokenId(tokenIdResult);
@@ -345,13 +338,16 @@ function BackupPage() {
             setWalletConnected(true);
             setIsWalletConnecting(false);
             
-            setStatusWithData(`✅ Maks savienots: ${address}`, 'success', { type: 'success', key: 'wallet-connected' });
+            setStatusWithData(
+                `${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`,
+                { type: 'success', key: 'wallet-connected' }
+            );
             
         } catch (e) {
             setIsWalletConnecting(false);
             setError(e.message);
         }
-    }, [config, githubUser, repoName, setStatusWithData]);
+    }, [config, githubUser, repoName, t, setStatusWithData]);
 
     useEffect(() => {
         const initPage = async () => {
@@ -385,14 +381,17 @@ function BackupPage() {
     }, []);
 
     const prepareBackup = useCallback(async () => {
-        // ✅ LABOJUMS #2: Ja maks NAV savienots, parāda ziņojumu, NEVIS prasa savienot vēlreiz!
+        // ✅ LABOJUMS #2: Ja maks NAV savienots, parāda ziņojumu:
         if (!walletConnected || !turboClient) {
             setError('Vispirms savieno maku!');
             return;
         }
         
         setIsWorking(true);
-        setStatusWithData(`⏳ ${t('preparing')}`, 'progress', { type: 'simple', key: 'preparing', statusType: 'progress' });
+        setStatusWithData(
+            `${icon('upload')} ${t('preparing')}`,
+            { type: 'simple', key: 'preparing' }
+        );
         setError('');
         
         try {
@@ -423,7 +422,10 @@ function BackupPage() {
             setCurrentJobId(result.jobId);
             
             if (files.length === 0) {
-                setStatusWithData(`✅ ${t('no-changes')}`, 'success', { type: 'simple', key: 'no-changes', statusType: 'success' });
+                setStatusWithData(
+                    `${icon('izdevas-veiksmigi')} ${t('no-changes')}`,
+                    { type: 'simple', key: 'no-changes' }
+                );
                 setIsWorking(false);
                 return;
             }
@@ -441,7 +443,10 @@ function BackupPage() {
             }
             
             if (changedFiles.length === 0) {
-                setStatusWithData(`✅ ${t('no-changes')}`, 'success', { type: 'simple', key: 'no-changes', statusType: 'success' });
+                setStatusWithData(
+                    `${icon('izdevas-veiksmigi')} ${t('no-changes')}`,
+                    { type: 'simple', key: 'no-changes' }
+                );
                 setIsWorking(false);
                 return;
             }
@@ -454,7 +459,6 @@ function BackupPage() {
             setStatusWithData(
                 `${icon('fails')} ${t('files-count')}: ${changedFiles.length}\n` +
                 `${icon('fails')} ${t('files-size')}: ${sizeText}`,
-                'progress',
                 { type: 'files', fileCount: changedFiles.length, fileSizeText: sizeText }
             );
             
@@ -467,7 +471,10 @@ function BackupPage() {
     }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, walletConnected, turboClient, setStatusWithData]);
 
     const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex) => {
-        setStatusWithData(`⏳ ${t('creating-zip')}`, 'progress', { type: 'simple', key: 'creating-zip', statusType: 'progress' });
+        setStatusWithData(
+            `${icon('upload')} ${t('creating-zip')}`,
+            { type: 'simple', key: 'creating-zip' }
+        );
         
         try {
             const zip = new JSZip();
@@ -486,7 +493,10 @@ function BackupPage() {
                 compressionOptions: { level: 6 }
             });
             
-            setStatusWithData(`⏳ ${t('encrypting')}`, 'progress', { type: 'simple', key: 'encrypting', statusType: 'progress' });
+            setStatusWithData(
+                `${icon('upload')} ${t('encrypting')}`,
+                { type: 'simple', key: 'encrypting' }
+            );
             
             const encrypted = await encryptData(zipBuffer, keyHex);
             const encryptedZipData = encrypted.encrypted;
@@ -496,7 +506,10 @@ function BackupPage() {
             setCurrentIV(iv);
             setCurrentMerkleRoot(merkleRoot);
             
-            setStatusWithData(`${icon('upload')} ${t('uploading')}`, 'progress', { type: 'uploading' });
+            setStatusWithData(
+                `${icon('upload')} ${t('uploading')}`,
+                { type: 'uploading' }
+            );
             
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             
@@ -526,7 +539,10 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, zipTxId })
             });
             
-            setStatusWithData(`⏳ ${t('manifest-ready')}`, 'progress', { type: 'simple', key: 'manifest-ready', statusType: 'progress' });
+            setStatusWithData(
+                `${icon('upload')} ${t('manifest-ready')}`,
+                { type: 'simple', key: 'manifest-ready' }
+            );
             
             const history = [...currentPreviousHistory];
             if (currentPreviousManifestId) {
@@ -599,7 +615,10 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, manifestTxId, manifest })
             });
             
-            setStatusWithData(`⏳ ${t('signing')}`, 'progress', { type: 'simple', key: 'signing', statusType: 'progress' });
+            setStatusWithData(
+                `${icon('upload')} ${t('signing')}`,
+                { type: 'simple', key: 'signing' }
+            );
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
@@ -656,10 +675,9 @@ function BackupPage() {
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             
-            // ✅ LABOJUMS #4: Saglabā statusa datus valodas maiņai:
+            // ✅ LABOJUMS #4: Saglabā datus valodas maiņai:
             setStatusWithData(
-                `${icon('izdevas-veiksmigi')} ${t('backup-complete')}`, 
-                'success', 
+                `${icon('izdevas-veiksmigi')} ${t('backup-complete')}`,
                 { type: 'success', key: 'backup-complete' }
             );
             
@@ -748,10 +766,10 @@ function BackupPage() {
             
             {status && (
                 <div className="status-card" style={{ display: 'block' }}>
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{status}</div>
+                    <div style={{ whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: status }} />
                     {backupCompleted && lastManifestTxId && (
                         <div style={{ marginTop: '12px' }}>
-                            <img src={icon('manifests')} className="icon-inline" alt="" style={{ display: 'inline-block', width: '24px', height: '24px', verticalAlign: 'middle', marginRight: '6px' }} />
+                            <span dangerouslySetInnerHTML={{ __html: icon('manifests') }} />
                             {t('manifest-link')}:{' '}
                             <a href={`${config.arweaveGateway}/raw/${lastManifestTxId}`} target="_blank" rel="noopener noreferrer">
                                 ar://{lastManifestTxId}
@@ -762,10 +780,7 @@ function BackupPage() {
             )}
             
             {error && (
-                <div className="error">
-                    <img src={icon('kluda')} className="icon-inline" alt="" style={{ display: 'inline-block', width: '24px', height: '24px', verticalAlign: 'middle', marginRight: '6px' }} />
-                    {error}
-                </div>
+                <div className="error" dangerouslySetInnerHTML={{ __html: `${icon('kluda')} ${error}` }} />
             )}
         </div>
     );
