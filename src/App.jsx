@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { useNavigate } from 'react-router-dom';
-import { translations } from './translations';
+import { useLanguage } from './LanguageContext';
 
 const NFT_ABI = [
     "function mintRepository(address recipient, string calldata repository, string calldata uri) external returns (uint256)",
@@ -27,21 +27,17 @@ function icon(name) {
 
 function App() {
     const navigate = useNavigate();
+    const { currentLanguage, t, switchLanguage } = useLanguage();
     const [config, setConfig] = useState(null);
     const [userAddress, setUserAddress] = useState(null);
     const [signer, setSigner] = useState(null);
     const [githubUser, setGithubUser] = useState(null);
-    const [currentLanguage, setCurrentLanguage] = useState(localStorage.getItem('permrepo-language') || 'lv');
     const [reposData, setReposData] = useState([]);
     const [selectedRepoName, setSelectedRepoName] = useState(null);
     const [subscriptionStatus, setSubscriptionStatus] = useState(null);
     const [walletConnected, setWalletConnected] = useState(false);
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
-
-    const t = useCallback((key) => {
-        return translations[currentLanguage]?.[key] || translations.lv[key] || key;
-    }, [currentLanguage]);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -100,7 +96,7 @@ function App() {
         }
         
         try {
-            setStatus('⏳ Savieno maku...');
+            setStatus('Savieno maku...');
             setError('');
             
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -206,9 +202,9 @@ function App() {
     return (
         <div className="container">
             <div className="language-selector">
-                <button className={`lang-btn ${currentLanguage === 'lv' ? 'active' : ''}`} onClick={() => setCurrentLanguage('lv')}>LV</button>
-                <button className={`lang-btn ${currentLanguage === 'en' ? 'active' : ''}`} onClick={() => setCurrentLanguage('en')}>EN</button>
-                <button className={`lang-btn ${currentLanguage === 'eo' ? 'active' : ''}`} onClick={() => setCurrentLanguage('eo')}>EO</button>
+                <button className={`lang-btn ${currentLanguage === 'lv' ? 'active' : ''}`} onClick={() => switchLanguage('lv')}>LV</button>
+                <button className={`lang-btn ${currentLanguage === 'en' ? 'active' : ''}`} onClick={() => switchLanguage('en')}>EN</button>
+                <button className={`lang-btn ${currentLanguage === 'eo' ? 'active' : ''}`} onClick={() => switchLanguage('eo')}>EO</button>
             </div>
             
             <img src="/icons/logo-nosaukums.svg" alt="PermRepo" className="logo-title" />
@@ -275,7 +271,7 @@ function App() {
                         onClick={connectWallet}
                         className="sign-button"
                     >
-                        🔗 Savienot maku
+                        {t('connect-wallet')}
                     </button>
                 </div>
             )}
