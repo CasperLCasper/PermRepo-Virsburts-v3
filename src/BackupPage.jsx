@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import JSZip from 'jszip';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { translations } from './translations';
+import { useLanguage } from './LanguageContext';
 import { TurboFactory } from '@ardrive/turbo-sdk/web';
 import { InjectedEthereumSigner } from '@dha-team/arbundles';
 
@@ -23,6 +23,7 @@ function icon(name) {
 function BackupPage() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
+    const { currentLanguage, t, switchLanguage } = useLanguage();
     const [config, setConfig] = useState(null);
     const [repoName, setRepoName] = useState(searchParams.get('repo'));
     const [tokenId, setTokenId] = useState(null);
@@ -47,15 +48,6 @@ function BackupPage() {
     const [currentIV, setCurrentIV] = useState(null);
     
     const [lastStatusData, setLastStatusData] = useState(null);
-
-    // ✅ GLOBĀLA valoda - TIEŠI kā oriģinālajā (nav React state!):
-    const currentLanguageRef = React.useRef(localStorage.getItem('permrepo-language') || 'lv');
-
-    // ✅ t() funkcija - izmanto ref, nevis state:
-    const t = useCallback((key) => {
-        const lang = currentLanguageRef.current;
-        return translations[lang]?.[key] || translations.lv[key] || key;
-    }, []);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -197,7 +189,6 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
-    // ✅ renderStatusFromData - izmanto TIEŠO valodu no ref:
     const renderStatusFromData = useCallback(() => {
         if (backupCompleted) {
             return;
@@ -228,29 +219,14 @@ function BackupPage() {
         }
     }, [backupCompleted, lastStatusData, t]);
 
-    // ✅ setStatusWithData:
-    const setStatusWithData = useCallback((message, data = null) => {
-        setStatus(message);
-        if (data) {
-            setLastStatusData(data);
-        }
-    }, []);
-
-    // ✅ switchLanguage - atjaunina ref UN state, tad renderē:
-    const switchLanguage = useCallback((lang) => {
-        currentLanguageRef.current = lang;  // ← TIEŠI atjaunina ref!
-        setCurrentLanguage(lang);  // ← Atjaunina state UI pogām
-        localStorage.setItem('permrepo-language', lang);
-        
-        renderStatusFromData();  // ← Izmanto ref, tāpēc strādā uzreiz!
-    }, [renderStatusFromData]);
-
-    const [currentLanguage, setCurrentLanguageState] = useState(currentLanguageRef.current);
+    useEffect(() => {
+        renderStatusFromData();
+    }, [currentLanguage]);
 
     const connectWallet = useCallback(async () => {
         try {
             if (!window.ethereum) {
-                setError('Lūdzu instalē maku!');
+                setError(t('connect-wallet'));
                 return;
             }
             
@@ -436,7 +412,6 @@ function BackupPage() {
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
             
-            // ✅ PARĀDA MAINĪTO FAILU SKAITU:
             setStatus(
                 `${icon('fails')} ${t('files-count')}: ${changedFiles.length}\n` +
                 `${icon('fails')} ${t('files-size')}: ${sizeText}`
