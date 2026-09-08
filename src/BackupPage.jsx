@@ -16,8 +16,9 @@ const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external"
 ];
 
+// ✅ PAREIZĀ icon() funkcija - atgriež HTML:
 function icon(name) {
-    return `<img src="/icons/${name}.svg" class="icon-inline">`;
+    return `<img src="/icons/${name}.svg" class="icon-inline" alt="${name}">`;
 }
 
 function BackupPage() {
@@ -32,6 +33,7 @@ function BackupPage() {
     const [signer, setSigner] = useState(null);
     const [turboClient, setTurboClient] = useState(null);
     const [walletConnected, setWalletConnected] = useState(false);
+    const [isWalletConnecting, setIsWalletConnecting] = useState(false);
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
@@ -189,7 +191,7 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
-    // ✅ renderStatusFromData - izmanto t() no konteksta (sinhroni):
+    // ✅ renderStatusFromData - ģenerē ziņojumu no DATIEM ar PAREIZO valodu:
     const renderStatusFromData = useCallback(() => {
         if (backupCompleted) {
             return;
@@ -232,7 +234,8 @@ function BackupPage() {
                 return;
             }
             
-            setStatus(`${icon('upload')} ${t('waiting')}`);
+            setIsWalletConnecting(true);
+            setStatus('');
             setError('');
             
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -260,11 +263,13 @@ function BackupPage() {
             const tokenIdResult = await nftContract.repositoryTokens(repoHash);
             if (tokenIdResult === 0n) {
                 setError('Nav NFT šim repo!');
+                setIsWalletConnecting(false);
                 return;
             }
             const nftOwner = await nftContract.ownerOf(tokenIdResult);
             if (nftOwner.toLowerCase() !== address.toLowerCase()) {
                 setError('NFT nepieder šim makam!');
+                setIsWalletConnecting(false);
                 return;
             }
             
@@ -308,11 +313,13 @@ function BackupPage() {
             });
             setTurboClient(client);
             setWalletConnected(true);
+            setIsWalletConnecting(false);
             
             setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`);
             setLastStatusData({ type: 'success', key: 'wallet-connected', address: address });
             
         } catch (e) {
+            setIsWalletConnecting(false);
             setError(e.message);
         }
     }, [config, githubUser, repoName, t]);
@@ -414,12 +421,15 @@ function BackupPage() {
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
             
-            // ✅ PARĀDA MAINĪTO FAILU SKAITU un SAGLABĀ datus:
+            // ✅ PARĀDA MAINĪTO FAILU SKAITU un IZMĒRU:
             setStatus(
                 `${icon('fails')} ${t('files-count')}: ${changedFiles.length}\n` +
                 `${icon('fails')} ${t('files-size')}: ${sizeText}`
             );
             setLastStatusData({ type: 'files', fileCount: changedFiles.length, fileSizeText: sizeText });
+            
+            // ✅ Parāda šo ziņojumu 2 sekundes pirms turpināt:
+            await new Promise(resolve => setTimeout(resolve, 2000));
             
             await uploadZip(result.jobId, changedFiles, unchangedFiles, keyHex);
             
@@ -681,13 +691,20 @@ function BackupPage() {
             </div>
             
             {!walletConnected ? (
-                <button 
-                    onClick={connectWallet}
-                    className="sign-button"
-                    style={{ marginTop: '20px' }}
-                >
-                    {t('connect-wallet')}
-                </button>
+                <div style={{ marginTop: '20px' }}>
+                    {isWalletConnecting ? (
+                        <div style={{ textAlign: 'center' }}>
+                            <div className="spinner"></div>
+                        </div>
+                    ) : (
+                        <button 
+                            onClick={connectWallet}
+                            className="sign-button"
+                        >
+                            {t('connect-wallet')}
+                        </button>
+                    )}
+                </div>
             ) : (
                 !backupCompleted ? (
                     <button 
