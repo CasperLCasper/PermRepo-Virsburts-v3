@@ -217,7 +217,11 @@ function BackupPage() {
                 setStatus(`${icon('upload')} ${tLang('uploading')}`);
                 break;
             case 'success':
-                setStatus(`${icon('izdevas-veiksmigi')} ${tLang(data.key)}`);
+                if (data.key === 'wallet-connected' && data.address) {
+                    setStatus(`${icon('izdevas-veiksmigi')} ${tLang('wallet-connected')}: ${data.address}`);
+                } else {
+                    setStatus(`${icon('izdevas-veiksmigi')} ${tLang(data.key)}`);
+                }
                 break;
             case 'simple':
                 setStatus(tLang(data.key));
@@ -246,7 +250,7 @@ function BackupPage() {
     const connectWallet = useCallback(async () => {
         try {
             if (!window.ethereum) {
-                setError('Lūdzu instalē maku!');
+                setError(getT(currentLanguage)('connect-wallet'));
                 return;
             }
             
@@ -333,7 +337,7 @@ function BackupPage() {
             
             setStatusWithData(
                 `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('wallet-connected')}: ${address}`,
-                { type: 'success', key: 'wallet-connected' }
+                { type: 'success', key: 'wallet-connected', address: address }
             );
             
         } catch (e) {
@@ -447,6 +451,7 @@ function BackupPage() {
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
             
+            // ✅ LABOJUMS #3: Parāda mainīto un nemainīto failu skaitu:
             setStatusWithData(
                 `${icon('fails')} ${getT(currentLanguage)('files-count')}: ${changedFiles.length}\n` +
                 `${icon('fails')} ${getT(currentLanguage)('files-size')}: ${sizeText}`,
