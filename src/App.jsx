@@ -37,7 +37,9 @@ function App() {
     const [subscriptionStatus, setSubscriptionStatus] = useState(null);
     const [walletConnected, setWalletConnected] = useState(false);
     const [status, setStatus] = useState('');
+    const [statusType, setStatusType] = useState('success');
     const [error, setError] = useState('');
+    const [lastStatusData, setLastStatusData] = useState(null);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -61,6 +63,7 @@ function App() {
     const purchaseSubscription = useCallback(async () => {
         try {
             setStatus('Apstiprina USDC atļauju...');
+            setStatusType('progress');
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const providerSigner = await provider.getSigner();
@@ -79,6 +82,7 @@ function App() {
             await subscribeTx.wait();
             
             setStatus('✅ Abonements iegādāts!');
+            setStatusType('success');
             await checkSubscription();
         } catch (e) {
             if (e.code === 'ACTION_REJECTED') {
@@ -97,6 +101,7 @@ function App() {
         
         try {
             setStatus('Savieno maku...');
+            setStatusType('progress');
             setError('');
             
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -112,7 +117,6 @@ function App() {
             
             setSigner(signerInstance);
             setUserAddress(address);
-            setWalletConnected(true);
             
             const data = await apiJson('/api/github/repos');
             if (!data.success || data.repos.length === 0) {
@@ -133,16 +137,22 @@ function App() {
             }
             
             setReposData(reposWithStatus);
-            setStatus('✅ Maks savienots: ' + address);
+            setWalletConnected(true);
+            
+            // ✅ Saglabā DATUS, nevis gatavu ziņojumu:
+            setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`);
+            setStatusType('success');
+            setLastStatusData({ type: 'wallet-connected', address: address });
             
         } catch (e) {
             setError(e.message);
         }
-    }, [config, apiJson, githubUser]);
+    }, [config, apiJson, githubUser, t]);
 
     const mintNFT = useCallback(async (repoName) => {
         try {
             setStatus('Izveido NFT...');
+            setStatusType('progress');
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const nftSigner = await provider.getSigner();
@@ -155,6 +165,7 @@ function App() {
             await tx.wait();
             
             setStatus('✅ NFT izveidots!');
+            setStatusType('success');
             await connectWallet();
         } catch (e) {
             if (e.code === 'ACTION_REJECTED') {
@@ -164,6 +175,13 @@ function App() {
             }
         }
     }, [config, githubUser, userAddress, connectWallet]);
+
+    // ✅ Atjaunina statusu, kad valoda mainās:
+    useEffect(() => {
+        if (lastStatusData && lastStatusData.type === 'wallet-connected') {
+            setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${lastStatusData.address}`);
+        }
+    }, [currentLanguage, lastStatusData, t]);
 
     useEffect(() => {
         const initApp = async () => {
@@ -341,16 +359,11 @@ function App() {
             )}
             
             {status && (
-                <div className="status" style={{ marginTop: '20px', textAlign: 'center', color: '#3fb950' }}>
-                    {status}
-                </div>
+                <div className="status" style={{ marginTop: '20px', textAlign: 'center', color: statusType === 'success' ? '#3fb950' : '#e6edf3' }} dangerouslySetInnerHTML={{ __html: status }} />
             )}
             
             {error && (
-                <div className="error">
-                    <img src={icon('kluda')} className="icon-inline" alt="" style={{ display: 'inline-block', width: '24px', height: '24px', verticalAlign: 'middle', marginRight: '6px' }} />
-                    {error}
-                </div>
+                <div className="error" dangerouslySetInnerHTML={{ __html: `${icon('kluda')} ${error}` }} />
             )}
         </div>
     );
