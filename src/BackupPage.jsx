@@ -32,14 +32,11 @@ function BackupPage() {
     const [signer, setSigner] = useState(null);
     const [turboClient, setTurboClient] = useState(null);
     const [walletConnected, setWalletConnected] = useState(false);
-    const [isWalletConnecting, setIsWalletConnecting] = useState(false);
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
     const [backupCompleted, setBackupCompleted] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
-    const [currentFiles, setCurrentFiles] = useState([]);
-    const [currentJobId, setCurrentJobId] = useState(null);
     const [nftInfo, setNftInfo] = useState({ tokenId: null, backupCount: null, lastManifest: null, lastMerkleRoot: null });
     
     const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState({});
@@ -52,9 +49,9 @@ function BackupPage() {
     
     const [lastStatusData, setLastStatusData] = useState(null);
 
-    const getT = useCallback((lang) => {
-        return (key) => translations[lang]?.[key] || translations.lv[key] || key;
-    }, []);
+    const t = useCallback((key) => {
+        return translations[currentLanguage]?.[key] || translations.lv[key] || key;
+    }, [currentLanguage]);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -102,17 +99,17 @@ function BackupPage() {
             const box = document.createElement('div');
             box.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;max-width:480px;width:100%;box-sizing:border-box;';
             const title = document.createElement('h2');
-            title.textContent = getT(currentLanguage)('key-title');
+            title.textContent = t('key-title');
             title.style.cssText = 'color:#79c0ff;margin-bottom:16px;';
             const input = document.createElement('input');
             input.type = 'password';
-            input.placeholder = getT(currentLanguage)('enter-key');
+            input.placeholder = t('enter-key');
             input.style.cssText = 'width:100%;padding:12px;background:#0d1117;border:1px solid #30363d;border-radius:8px;color:#e6edf3;font-size:16px;margin-bottom:16px;box-sizing:border-box;';
             const confirmButton = document.createElement('button');
-            confirmButton.textContent = getT(currentLanguage)('confirm-key');
+            confirmButton.textContent = t('confirm-key');
             confirmButton.style.cssText = 'width:100%;padding:12px;background:#238636;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;';
             const cancelButton = document.createElement('button');
-            cancelButton.textContent = getT(currentLanguage)('cancel');
+            cancelButton.textContent = t('cancel');
             cancelButton.style.cssText = 'width:100%;padding:12px;background:#30363d;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-top:8px;';
             box.appendChild(title);
             box.appendChild(input);
@@ -136,7 +133,7 @@ function BackupPage() {
             });
             input.focus();
         });
-    }, [currentLanguage, getT]);
+    }, [t]);
 
     const showMasterKey = useCallback((keyToShow) => {
         return new Promise(resolve => {
@@ -145,22 +142,22 @@ function BackupPage() {
             const box = document.createElement('div');
             box.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;max-width:480px;width:100%;box-sizing:border-box;';
             const title = document.createElement('h2');
-            title.textContent = getT(currentLanguage)('key-title');
+            title.textContent = t('key-title');
             title.style.cssText = 'color:#79c0ff;margin-bottom:16px;';
             const description = document.createElement('p');
-            description.textContent = getT(currentLanguage)('key-description');
+            description.textContent = t('key-description');
             description.style.cssText = 'color:#b0b8c4;margin-bottom:16px;';
             const keyBox = document.createElement('div');
             keyBox.textContent = keyToShow;
             keyBox.style.cssText = 'background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:16px;word-break:break-all;font-family:monospace;color:#e6edf3;';
             const copyButton = document.createElement('button');
-            copyButton.textContent = getT(currentLanguage)('copy-key');
+            copyButton.textContent = t('copy-key');
             copyButton.style.cssText = 'width:100%;padding:12px;background:#238636;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-bottom:8px;';
             const downloadButton = document.createElement('button');
-            downloadButton.textContent = getT(currentLanguage)('download-key');
+            downloadButton.textContent = t('download-key');
             downloadButton.style.cssText = 'width:100%;padding:12px;background:#21262d;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-bottom:8px;';
             const closeButton = document.createElement('button');
-            closeButton.textContent = getT(currentLanguage)('saving-key');
+            closeButton.textContent = t('saving-key');
             closeButton.style.cssText = 'width:100%;padding:12px;background:#f85149;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;';
             box.appendChild(title);
             box.appendChild(description);
@@ -194,9 +191,10 @@ function BackupPage() {
             
             closeButton.onclick = () => { modal.remove(); resolve(); };
         });
-    }, [currentLanguage, getT, repoName]);
+    }, [t, repoName]);
 
-    const renderStatusFromData = useCallback((lang) => {
+    // ✅ TIEŠI kā oriģinālajā renderStatusFromData:
+    const renderStatusFromData = useCallback(() => {
         if (backupCompleted) {
             return;
         }
@@ -204,33 +202,29 @@ function BackupPage() {
         if (!lastStatusData) return;
         
         const data = lastStatusData;
-        const tLang = getT(lang);
         
         switch(data.type) {
             case 'files':
                 setStatus(
-                    `${icon('fails')} ${tLang('files-count')}: ${data.fileCount}\n` +
-                    `${icon('fails')} ${tLang('files-size')}: ${data.fileSizeText}`
+                    `${icon('fails')} ${t('files-count')}: ${data.fileCount}\n` +
+                    `${icon('fails')} ${t('files-size')}: ${data.fileSizeText}`
                 );
                 break;
             case 'uploading':
-                setStatus(`${icon('upload')} ${tLang('uploading')}`);
+                setStatus(`${icon('upload')} ${t('uploading')}`);
                 break;
             case 'success':
-                if (data.key === 'wallet-connected' && data.address) {
-                    setStatus(`${icon('izdevas-veiksmigi')} ${tLang('wallet-connected')}: ${data.address}`);
-                } else {
-                    setStatus(`${icon('izdevas-veiksmigi')} ${tLang(data.key)}`);
-                }
+                setStatus(`${icon('izdevas-veiksmigi')} ${t(data.key)}`);
                 break;
             case 'simple':
-                setStatus(tLang(data.key));
+                setStatus(t(data.key));
                 break;
             default:
-                setStatus(tLang(data.key));
+                setStatus(t(data.key));
         }
-    }, [backupCompleted, lastStatusData, getT]);
+    }, [backupCompleted, lastStatusData, t]);
 
+    // ✅ setStatusWithData - saglabā TIKAI datus:
     const setStatusWithData = useCallback((message, data = null) => {
         setStatus(message);
         if (data) {
@@ -238,24 +232,24 @@ function BackupPage() {
         }
     }, []);
 
+    // ✅ switchLanguage - TIEŠI kā oriģinālajā:
     const switchLanguage = useCallback((lang) => {
         setCurrentLanguage(lang);
         localStorage.setItem('permrepo-language', lang);
         
         setTimeout(() => {
-            renderStatusFromData(lang);
-        }, 50);
+            renderStatusFromData();
+        }, 0);
     }, [renderStatusFromData]);
 
     const connectWallet = useCallback(async () => {
         try {
             if (!window.ethereum) {
-                setError(getT(currentLanguage)('connect-wallet'));
+                setError('Lūdzu instalē maku!');
                 return;
             }
             
-            setIsWalletConnecting(true);
-            setStatus(`${icon('upload')} ${getT(currentLanguage)('waiting')}`);
+            setStatus(t('waiting'));
             setError('');
             
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -283,13 +277,11 @@ function BackupPage() {
             const tokenIdResult = await nftContract.repositoryTokens(repoHash);
             if (tokenIdResult === 0n) {
                 setError('Nav NFT šim repo!');
-                setIsWalletConnecting(false);
                 return;
             }
             const nftOwner = await nftContract.ownerOf(tokenIdResult);
             if (nftOwner.toLowerCase() !== address.toLowerCase()) {
                 setError('NFT nepieder šim makam!');
-                setIsWalletConnecting(false);
                 return;
             }
             
@@ -333,18 +325,15 @@ function BackupPage() {
             });
             setTurboClient(client);
             setWalletConnected(true);
-            setIsWalletConnecting(false);
             
-            setStatusWithData(
-                `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('wallet-connected')}: ${address}`,
-                { type: 'success', key: 'wallet-connected', address: address }
-            );
+            // ✅ Tikai TAGAD iestati statusu (nevis pirms!):
+            setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`);
+            setLastStatusData({ type: 'success', key: 'wallet-connected' });
             
         } catch (e) {
-            setIsWalletConnecting(false);
             setError(e.message);
         }
-    }, [config, githubUser, repoName, currentLanguage, getT, setStatusWithData]);
+    }, [config, githubUser, repoName, t]);
 
     useEffect(() => {
         const initPage = async () => {
@@ -379,15 +368,13 @@ function BackupPage() {
 
     const prepareBackup = useCallback(async () => {
         if (!walletConnected || !turboClient) {
-            setError(getT(currentLanguage)('connect-wallet'));
+            setError(t('connect-wallet'));
             return;
         }
         
         setIsWorking(true);
-        setStatusWithData(
-            `${icon('upload')} ${getT(currentLanguage)('preparing')}`,
-            { type: 'simple', key: 'preparing' }
-        );
+        setStatus(t('preparing'));
+        setLastStatusData({ type: 'simple', key: 'preparing' });
         setError('');
         
         try {
@@ -401,7 +388,7 @@ function BackupPage() {
             } else {
                 keyHex = await promptMasterKey();
                 if (!isValidMasterKey(keyHex)) {
-                    setError(getT(currentLanguage)('encrypted-required'));
+                    setError(t('encrypted-required'));
                     setIsWorking(false);
                     return;
                 }
@@ -414,14 +401,10 @@ function BackupPage() {
             });
             
             const files = result.files || [];
-            setCurrentFiles(files);
-            setCurrentJobId(result.jobId);
             
             if (files.length === 0) {
-                setStatusWithData(
-                    `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('no-changes')}`,
-                    { type: 'simple', key: 'no-changes' }
-                );
+                setStatus(`${icon('izdevas-veiksmigi')} ${t('no-changes')}`);
+                setLastStatusData({ type: 'simple', key: 'no-changes' });
                 setIsWorking(false);
                 return;
             }
@@ -439,10 +422,8 @@ function BackupPage() {
             }
             
             if (changedFiles.length === 0) {
-                setStatusWithData(
-                    `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('no-changes')}`,
-                    { type: 'simple', key: 'no-changes' }
-                );
+                setStatus(`${icon('izdevas-veiksmigi')} ${t('no-changes')}`);
+                setLastStatusData({ type: 'simple', key: 'no-changes' });
                 setIsWorking(false);
                 return;
             }
@@ -451,12 +432,12 @@ function BackupPage() {
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
             
-            // ✅ LABOJUMS #3: Parāda mainīto un nemainīto failu skaitu:
-            setStatusWithData(
-                `${icon('fails')} ${getT(currentLanguage)('files-count')}: ${changedFiles.length}\n` +
-                `${icon('fails')} ${getT(currentLanguage)('files-size')}: ${sizeText}`,
-                { type: 'files', fileCount: changedFiles.length, fileSizeText: sizeText }
+            // ✅ PARĀDA MAINĪTO FAILU SKAITU:
+            setStatus(
+                `${icon('fails')} ${t('files-count')}: ${changedFiles.length}\n` +
+                `${icon('fails')} ${t('files-size')}: ${sizeText}`
             );
+            setLastStatusData({ type: 'files', fileCount: changedFiles.length, fileSizeText: sizeText });
             
             await uploadZip(result.jobId, changedFiles, unchangedFiles, keyHex);
             
@@ -464,13 +445,11 @@ function BackupPage() {
             setError(e.message);
             setIsWorking(false);
         }
-    }, [apiJson, repoName, userAddress, currentLanguage, getT, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, walletConnected, turboClient, setStatusWithData]);
+    }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, walletConnected, turboClient]);
 
     const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex) => {
-        setStatusWithData(
-            `${icon('upload')} ${getT(currentLanguage)('creating-zip')}`,
-            { type: 'simple', key: 'creating-zip' }
-        );
+        setStatus(t('creating-zip'));
+        setLastStatusData({ type: 'simple', key: 'creating-zip' });
         
         try {
             const zip = new JSZip();
@@ -489,10 +468,8 @@ function BackupPage() {
                 compressionOptions: { level: 6 }
             });
             
-            setStatusWithData(
-                `${icon('upload')} ${getT(currentLanguage)('encrypting')}`,
-                { type: 'simple', key: 'encrypting' }
-            );
+            setStatus(t('encrypting'));
+            setLastStatusData({ type: 'simple', key: 'encrypting' });
             
             const encrypted = await encryptData(zipBuffer, keyHex);
             const encryptedZipData = encrypted.encrypted;
@@ -502,10 +479,8 @@ function BackupPage() {
             setCurrentIV(iv);
             setCurrentMerkleRoot(merkleRoot);
             
-            setStatusWithData(
-                `${icon('upload')} ${getT(currentLanguage)('uploading')}`,
-                { type: 'uploading' }
-            );
+            setStatus(`${icon('upload')} ${t('uploading')}`);
+            setLastStatusData({ type: 'uploading' });
             
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             
@@ -535,10 +510,8 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, zipTxId })
             });
             
-            setStatusWithData(
-                `${icon('upload')} ${getT(currentLanguage)('manifest-ready')}`,
-                { type: 'simple', key: 'manifest-ready' }
-            );
+            setStatus(t('manifest-ready'));
+            setLastStatusData({ type: 'simple', key: 'manifest-ready' });
             
             const history = [...currentPreviousHistory];
             if (currentPreviousManifestId) {
@@ -611,10 +584,8 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, manifestTxId, manifest })
             });
             
-            setStatusWithData(
-                `${icon('upload')} ${getT(currentLanguage)('signing')}`,
-                { type: 'simple', key: 'signing' }
-            );
+            setStatus(t('signing'));
+            setLastStatusData({ type: 'simple', key: 'signing' });
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
@@ -671,24 +642,22 @@ function BackupPage() {
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             
-            setStatusWithData(
-                `${icon('izdevas-veiksmigi')} ${getT(currentLanguage)('backup-complete')}`,
-                { type: 'success', key: 'backup-complete' }
-            );
+            setStatus(`${icon('izdevas-veiksmigi')} ${t('backup-complete')}`);
+            setLastStatusData({ type: 'success', key: 'backup-complete' });
             
         } catch (e) {
             console.error('=== KĻŪDA ===');
             console.error('Ziņojums:', e.message);
             
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
-                setError(getT(currentLanguage)('transaction-cancelled'));
+                setError(t('transaction-cancelled'));
             } else {
                 setError(e.message);
             }
         } finally {
             setIsWorking(false);
         }
-    }, [apiJson, currentLanguage, getT, turboClient, signer, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData, setStatusWithData]);
+    }, [apiJson, t, turboClient, signer, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData]);
 
     if (!config) {
         return (
@@ -707,36 +676,35 @@ function BackupPage() {
             </div>
             
             <img src="/icons/logo-nosaukums.svg" alt="PermRepo" className="logo-title" />
-            <p className="subtitle">{getT(currentLanguage)('repo-label')}: {repoName || '-'}</p>
+            <p className="subtitle">{t('repo-label')}: {repoName || '-'}</p>
             
             <div className="info-row text-left">
-                <span className="info-label">{getT(currentLanguage)('nft-token')}</span>
+                <span className="info-label">{t('nft-token')}</span>
                 <span className="info-value">{nftInfo.tokenId || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">{getT(currentLanguage)('backup-count')}</span>
+                <span className="info-label">{t('backup-count')}</span>
                 <span className="info-value">{nftInfo.backupCount || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">{getT(currentLanguage)('last-manifest')}</span>
+                <span className="info-label">{t('last-manifest')}</span>
                 <span className="info-value">{nftInfo.lastManifest || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">{getT(currentLanguage)('last-merkle')}</span>
+                <span className="info-label">{t('last-merkle')}</span>
                 <span className="info-value">{nftInfo.lastMerkleRoot || '-'}</span>
             </div>
             
             {!walletConnected ? (
                 <button 
                     onClick={connectWallet}
-                    disabled={isWalletConnecting}
                     className="sign-button"
                     style={{ marginTop: '20px' }}
                 >
-                    {isWalletConnecting ? '⏳' : '🔗 ' + getT(currentLanguage)('connect-wallet')}
+                    {t('connect-wallet')}
                 </button>
             ) : (
                 !backupCompleted ? (
@@ -746,7 +714,7 @@ function BackupPage() {
                         className="sign-button"
                         style={{ marginTop: '20px' }}
                     >
-                        {isWorking ? '⏳' : getT(currentLanguage)('start-backup')}
+                        {isWorking ? '⏳' : t('start-backup')}
                     </button>
                 ) : (
                     <button 
@@ -754,7 +722,7 @@ function BackupPage() {
                         className="sign-button"
                         style={{ marginTop: '20px' }}
                     >
-                        {getT(currentLanguage)('back-home')}
+                        {t('back-home')}
                     </button>
                 )
             )}
@@ -765,7 +733,7 @@ function BackupPage() {
                     {backupCompleted && lastManifestTxId && (
                         <div style={{ marginTop: '12px' }}>
                             <span dangerouslySetInnerHTML={{ __html: icon('manifests') }} />
-                            {getT(currentLanguage)('manifest-link')}:{' '}
+                            {t('manifest-link')}:{' '}
                             <a href={`${config.arweaveGateway}/raw/${lastManifestTxId}`} target="_blank" rel="noopener noreferrer">
                                 ar://{lastManifestTxId}
                             </a>
