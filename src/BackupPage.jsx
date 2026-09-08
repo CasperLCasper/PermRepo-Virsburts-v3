@@ -32,6 +32,7 @@ function BackupPage() {
     const [signer, setSigner] = useState(null);
     const [turboClient, setTurboClient] = useState(null);
     const [walletConnected, setWalletConnected] = useState(false);
+    const [isWalletConnecting, setIsWalletConnecting] = useState(false);
     const [status, setStatus] = useState('');
     const [statusType, setStatusType] = useState('progress');
     const [error, setError] = useState('');
@@ -50,9 +51,8 @@ function BackupPage() {
     const [currentMerkleRoot, setCurrentMerkleRoot] = useState(null);
     const [currentIV, setCurrentIV] = useState(null);
     
-    // ✅ Statusa dati valodas maiņai:
+    // ✅ Statusa dati valodas maiņai (kā oriģinālajā kodā):
     const [lastStatusData, setLastStatusData] = useState(null);
-    const [changedFilesCount, setChangedFilesCount] = useState(0);
 
     const t = useCallback((key) => {
         return translations[currentLanguage]?.[key] || translations.lv[key] || key;
@@ -198,43 +198,60 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
-    // ✅ Statusa ziņojuma iestatīšana ar datiem valodas maiņai:
-    const setStatusWithData = useCallback((message, type, data = null) => {
-        setStatus(message);
-        setStatusType(type);
-        setLastStatusData(data);
-    }, []);
-
-    // ✅ Statusa renderēšana valodas maiņai:
+    // ✅ renderStatusFromData - kā oriģinālajā kodā:
     const renderStatusFromData = useCallback(() => {
+        if (backupCompleted) {
+            return;
+        }
+        
         if (!lastStatusData) return;
         
         const data = lastStatusData;
         
         switch(data.type) {
             case 'files':
-                setStatus(`${t('files-count')}: ${data.fileCount}\n${t('files-size')}: ${data.fileSizeText}`);
+                setStatus(
+                    `${icon('fails')} ${t('files-count')}: ${data.fileCount}\n` +
+                    `${icon('fails')} ${t('files-size')}: ${data.fileSizeText}`
+                );
+                setStatusType('progress');
                 break;
             case 'uploading':
-                setStatus(`⏳ ${t('uploading')}`);
+                setStatus(`${icon('upload')} ${t('uploading')}`);
+                setStatusType('progress');
                 break;
             case 'success':
-                setStatus(`✅ ${t(data.key)}`);
+                setStatus(`${icon('izdevas-veiksmigi')} ${t(data.key)}`);
                 setStatusType('success');
                 break;
             case 'simple':
                 setStatus(t(data.key));
+                setStatusType(data.statusType || 'progress');
                 break;
             default:
                 setStatus(t(data.key));
+                setStatusType(data.statusType || 'progress');
         }
-    }, [lastStatusData, t]);
+    }, [backupCompleted, lastStatusData, t]);
+
+    // ✅ setStatusWithData - saglabā datus valodas maiņai:
+    const setStatusWithData = useCallback((message, type, data = null) => {
+        setStatus(message);
+        setStatusType(type);
+        if (data) {
+            setLastStatusData(data);
+        }
+    }, []);
 
     // ✅ Valodas maiņa ar statusa atjaunināšanu:
     const switchLanguage = useCallback((lang) => {
         setCurrentLanguage(lang);
         localStorage.setItem('permrepo-language', lang);
-        renderStatusFromData();
+        
+        // Atjaunina statusu ar jauno valodu:
+        setTimeout(() => {
+            renderStatusFromData();
+        }, 0);
     }, [renderStatusFromData]);
 
     const connectWallet = useCallback(async () => {
@@ -244,7 +261,10 @@ function BackupPage() {
                 return;
             }
             
-            setStatusWithData('⏳ Savieno maku...', 'progress', { type: 'simple', key: 'waiting' });
+            // ✅ LABOJUMS #1: Status mainās tikai pēc VISU darbību pabeigšanas:
+            setIsWalletConnecting(true);
+            setStatus('⏳ Savieno maku...');
+            setStatusType('progress');
             setError('');
             
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -258,9 +278,6 @@ function BackupPage() {
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signerInstance = await provider.getSigner();
             
-            setSigner(signerInstance);
-            setUserAddress(address);
-            
             const client = TurboFactory.authenticated({
                 signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
                 token: 'base-eth',
@@ -268,7 +285,6 @@ function BackupPage() {
                 uploadServiceConfig: { url: config.turboUploadUrl },
                 paymentServiceConfig: { url: config.turboPaymentUrl }
             });
-            setTurboClient(client);
             
             const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const fullRepoName = `${githubUser}/${repoName}`;
@@ -276,25 +292,19 @@ function BackupPage() {
             const tokenIdResult = await nftContract.repositoryTokens(repoHash);
             if (tokenIdResult === 0n) {
                 setError('Nav NFT šim repo!');
+                setIsWalletConnecting(false);
                 return;
             }
             const nftOwner = await nftContract.ownerOf(tokenIdResult);
             if (nftOwner.toLowerCase() !== address.toLowerCase()) {
                 setError('NFT nepieder šim makam!');
+                setIsWalletConnecting(false);
                 return;
             }
             
             const backupCount = await nftContract.getBackupCount(tokenIdResult);
             const lastManifest = await nftContract.getManifestURI(tokenIdResult);
             const lastMerkleRoot = await nftContract.getLastMerkleRoot(tokenIdResult);
-            
-            setTokenId(tokenIdResult);
-            setNftInfo({
-                tokenId: tokenIdResult.toString(),
-                backupCount: backupCount.toString(),
-                lastManifest: lastManifest || 'Nav',
-                lastMerkleRoot: lastMerkleRoot || 'Nav'
-            });
             
             if (backupCount > 0n && lastManifest && lastManifest.startsWith('ar://')) {
                 const prevManifestId = lastManifest.slice(5);
@@ -321,11 +331,24 @@ function BackupPage() {
                 }
             }
             
-            // ✅ Tikai TAGAD iestati walletConnected un statusu:
+            // ✅ TIKAI TAGAD iestati VISU stāvokli:
+            setSigner(signerInstance);
+            setUserAddress(address);
+            setTokenId(tokenIdResult);
+            setNftInfo({
+                tokenId: tokenIdResult.toString(),
+                backupCount: backupCount.toString(),
+                lastManifest: lastManifest || 'Nav',
+                lastMerkleRoot: lastMerkleRoot || 'Nav'
+            });
+            setTurboClient(client);
             setWalletConnected(true);
+            setIsWalletConnecting(false);
+            
             setStatusWithData(`✅ Maks savienots: ${address}`, 'success', { type: 'success', key: 'wallet-connected' });
             
         } catch (e) {
+            setIsWalletConnecting(false);
             setError(e.message);
         }
     }, [config, githubUser, repoName, setStatusWithData]);
@@ -362,14 +385,14 @@ function BackupPage() {
     }, []);
 
     const prepareBackup = useCallback(async () => {
-        // ✅ Ja maks nav savienots, parāda ziņojumu NEVIS prasa vēlreiz:
+        // ✅ LABOJUMS #2: Ja maks NAV savienots, parāda ziņojumu, NEVIS prasa savienot vēlreiz!
         if (!walletConnected || !turboClient) {
             setError('Vispirms savieno maku!');
             return;
         }
         
         setIsWorking(true);
-        setStatusWithData(`⏳ ${t('preparing')}`, 'progress', { type: 'simple', key: 'preparing' });
+        setStatusWithData(`⏳ ${t('preparing')}`, 'progress', { type: 'simple', key: 'preparing', statusType: 'progress' });
         setError('');
         
         try {
@@ -400,7 +423,7 @@ function BackupPage() {
             setCurrentJobId(result.jobId);
             
             if (files.length === 0) {
-                setStatusWithData(`✅ ${t('no-changes')}`, 'success', { type: 'simple', key: 'no-changes' });
+                setStatusWithData(`✅ ${t('no-changes')}`, 'success', { type: 'simple', key: 'no-changes', statusType: 'success' });
                 setIsWorking(false);
                 return;
             }
@@ -418,22 +441,19 @@ function BackupPage() {
             }
             
             if (changedFiles.length === 0) {
-                setStatusWithData(`✅ ${t('no-changes')}`, 'success', { type: 'simple', key: 'no-changes' });
+                setStatusWithData(`✅ ${t('no-changes')}`, 'success', { type: 'simple', key: 'no-changes', statusType: 'success' });
                 setIsWorking(false);
                 return;
             }
-            
-            // ✅ Saglabā mainīto failu skaitu un parāda:
-            setChangedFilesCount(changedFiles.length);
             
             const sizeText = formatFileSize(
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
             
-            // ✅ PIEVIENO: parāda, cik failu mainīti un cik nemainīti:
+            // ✅ LABOJUMS #3: Parāda mainīto failu skaitu:
             setStatusWithData(
-                `${t('files-count')}: ${changedFiles.length}\n` +
-                `${t('files-size')}: ${sizeText}`,
+                `${icon('fails')} ${t('files-count')}: ${changedFiles.length}\n` +
+                `${icon('fails')} ${t('files-size')}: ${sizeText}`,
                 'progress',
                 { type: 'files', fileCount: changedFiles.length, fileSizeText: sizeText }
             );
@@ -447,7 +467,7 @@ function BackupPage() {
     }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, walletConnected, turboClient, setStatusWithData]);
 
     const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex) => {
-        setStatusWithData(`⏳ ${t('creating-zip')}`, 'progress', { type: 'simple', key: 'creating-zip' });
+        setStatusWithData(`⏳ ${t('creating-zip')}`, 'progress', { type: 'simple', key: 'creating-zip', statusType: 'progress' });
         
         try {
             const zip = new JSZip();
@@ -466,7 +486,7 @@ function BackupPage() {
                 compressionOptions: { level: 6 }
             });
             
-            setStatusWithData(`⏳ ${t('encrypting')}`, 'progress', { type: 'simple', key: 'encrypting' });
+            setStatusWithData(`⏳ ${t('encrypting')}`, 'progress', { type: 'simple', key: 'encrypting', statusType: 'progress' });
             
             const encrypted = await encryptData(zipBuffer, keyHex);
             const encryptedZipData = encrypted.encrypted;
@@ -476,7 +496,7 @@ function BackupPage() {
             setCurrentIV(iv);
             setCurrentMerkleRoot(merkleRoot);
             
-            setStatusWithData(`⏳ ${t('uploading')}`, 'progress', { type: 'uploading' });
+            setStatusWithData(`${icon('upload')} ${t('uploading')}`, 'progress', { type: 'uploading' });
             
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             
@@ -506,7 +526,7 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, zipTxId })
             });
             
-            setStatusWithData(`⏳ ${t('manifest-ready')}`, 'progress', { type: 'simple', key: 'manifest-ready' });
+            setStatusWithData(`⏳ ${t('manifest-ready')}`, 'progress', { type: 'simple', key: 'manifest-ready', statusType: 'progress' });
             
             const history = [...currentPreviousHistory];
             if (currentPreviousManifestId) {
@@ -579,7 +599,7 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, manifestTxId, manifest })
             });
             
-            setStatusWithData(`⏳ ${t('signing')}`, 'progress', { type: 'simple', key: 'signing' });
+            setStatusWithData(`⏳ ${t('signing')}`, 'progress', { type: 'simple', key: 'signing', statusType: 'progress' });
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
@@ -636,8 +656,12 @@ function BackupPage() {
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             
-            // ✅ Saglabā statusa datus valodas maiņai:
-            setStatusWithData(`✅ ${t('backup-complete')}`, 'success', { type: 'success', key: 'backup-complete' });
+            // ✅ LABOJUMS #4: Saglabā statusa datus valodas maiņai:
+            setStatusWithData(
+                `${icon('izdevas-veiksmigi')} ${t('backup-complete')}`, 
+                'success', 
+                { type: 'success', key: 'backup-complete' }
+            );
             
         } catch (e) {
             console.error('=== KĻŪDA ===');
@@ -695,10 +719,11 @@ function BackupPage() {
             {!walletConnected ? (
                 <button 
                     onClick={connectWallet}
+                    disabled={isWalletConnecting}
                     className="sign-button"
                     style={{ marginTop: '20px' }}
                 >
-                    🔗 Savienot maku
+                    {isWalletConnecting ? '⏳' : '🔗 Savienot maku'}
                 </button>
             ) : (
                 !backupCompleted ? (
@@ -722,7 +747,7 @@ function BackupPage() {
             )}
             
             {status && (
-                <div className={`status-card ${statusType}`} style={{ display: 'block' }}>
+                <div className="status-card" style={{ display: 'block' }}>
                     <div style={{ whiteSpace: 'pre-wrap' }}>{status}</div>
                     {backupCompleted && lastManifestTxId && (
                         <div style={{ marginTop: '12px' }}>
