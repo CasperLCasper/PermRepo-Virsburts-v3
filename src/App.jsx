@@ -22,7 +22,7 @@ const USDC_ABI = [
 ];
 
 function icon(name) {
-    return `/icons/${name}.svg`;
+    return `<img src="/icons/${name}.svg" class="icon-inline" alt="${name}">`;
 }
 
 function App() {
@@ -40,6 +40,7 @@ function App() {
     const [statusType, setStatusType] = useState('success');
     const [error, setError] = useState('');
     const [lastStatusData, setLastStatusData] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -62,6 +63,7 @@ function App() {
 
     const purchaseSubscription = useCallback(async () => {
         try {
+            setIsLoading(true);
             setStatus('Apstiprina USDC atļauju...');
             setStatusType('progress');
             
@@ -81,10 +83,13 @@ function App() {
             const subscribeTx = await subscriptionContract.connect(providerSigner).subscribe(githubHash);
             await subscribeTx.wait();
             
-            setStatus('✅ Abonements iegādāts!');
+            setStatus(`${icon('izdevas-veiksmigi')} Abonements iegādāts!`);
             setStatusType('success');
+            setLastStatusData({ type: 'subscription-purchased' });
             await checkSubscription();
+            setIsLoading(false);
         } catch (e) {
+            setIsLoading(false);
             if (e.code === 'ACTION_REJECTED') {
                 setError('Transakcija atcelta');
             } else {
@@ -100,8 +105,8 @@ function App() {
         }
         
         try {
-            setStatus('Savieno maku...');
-            setStatusType('progress');
+            setIsLoading(true);
+            setStatus('');
             setError('');
             
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -121,6 +126,7 @@ function App() {
             const data = await apiJson('/api/github/repos');
             if (!data.success || data.repos.length === 0) {
                 setError('Nav atrasts neviens repozitorijs');
+                setIsLoading(false);
                 return;
             }
             
@@ -142,14 +148,17 @@ function App() {
             setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`);
             setStatusType('success');
             setLastStatusData({ type: 'wallet-connected', address: address });
+            setIsLoading(false);
             
         } catch (e) {
+            setIsLoading(false);
             setError(e.message);
         }
     }, [config, apiJson, githubUser, t]);
 
     const mintNFT = useCallback(async (repoName) => {
         try {
+            setIsLoading(true);
             setStatus('Izveido NFT...');
             setStatusType('progress');
             
@@ -163,10 +172,13 @@ function App() {
             const tx = await nftWrite.mintRepository(userAddress, fullRepoName, nftImageURI);
             await tx.wait();
             
-            setStatus('✅ NFT izveidots!');
+            setStatus(`${icon('izdevas-veiksmigi')} NFT izveidots!`);
             setStatusType('success');
+            setLastStatusData({ type: 'nft-minted' });
             await connectWallet();
+            setIsLoading(false);
         } catch (e) {
+            setIsLoading(false);
             if (e.code === 'ACTION_REJECTED') {
                 setError('Transakcija atcelta');
             } else {
@@ -176,11 +188,11 @@ function App() {
     }, [config, githubUser, userAddress, connectWallet]);
 
     useEffect(() => {
-        if (lastStatusData && lastStatusData.type === 'wallet-connected') {
+        if (lastStatusData && lastStatusData.type === 'wallet-connected' && walletConnected) {
             setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${lastStatusData.address}`);
             setStatusType('success');
         }
-    }, [currentLanguage, lastStatusData, t]);
+    }, [currentLanguage, lastStatusData, walletConnected, t]);
 
     useEffect(() => {
         const initApp = async () => {
@@ -211,7 +223,9 @@ function App() {
     if (!config) {
         return (
             <div className="container">
-                <p>Ielādē...</p>
+                <div style={{ textAlign: 'center', padding: '20px' }}>
+                    <div className="spinner"></div>
+                </div>
             </div>
         );
     }
@@ -229,26 +243,32 @@ function App() {
             
             {subscriptionStatus && (
                 <div style={{ display: 'block', marginBottom: '16px' }}>
-                    <button 
-                        disabled={subscriptionStatus.isSubscribed}
-                        onClick={subscriptionStatus.isSubscribed ? undefined : purchaseSubscription}
-                        style={{ 
-                            width: '100%', 
-                            padding: '12px', 
-                            borderRadius: '8px', 
-                            fontSize: '14px',
-                            cursor: subscriptionStatus.isSubscribed ? 'default' : 'pointer',
-                            background: subscriptionStatus.isSubscribed ? 'rgba(63, 185, 80, 0.1)' : 'rgba(248, 81, 73, 0.1)',
-                            border: `1px solid ${subscriptionStatus.isSubscribed ? 'rgba(63, 185, 80, 0.3)' : 'rgba(248, 81, 73, 0.3)'}`,
-                            color: subscriptionStatus.isSubscribed ? '#3fb950' : '#f85149',
-                            marginTop: '0'
-                        }}
-                    >
-                        <span className={`subscription-dot ${subscriptionStatus.isSubscribed ? 'active' : 'expired'}`}></span>
-                        {subscriptionStatus.isSubscribed 
-                            ? `${t('subscription-active')} (${Math.floor(Number(subscriptionStatus.remainingTime) / 86400)} ${t('days')})` 
-                            : t('subscription-expired')}
-                    </button>
+                    {isLoading ? (
+                        <div style={{ textAlign: 'center', padding: '20px' }}>
+                            <div className="spinner"></div>
+                        </div>
+                    ) : (
+                        <button 
+                            disabled={subscriptionStatus.isSubscribed}
+                            onClick={subscriptionStatus.isSubscribed ? undefined : purchaseSubscription}
+                            style={{ 
+                                width: '100%', 
+                                padding: '12px', 
+                                borderRadius: '8px', 
+                                fontSize: '14px',
+                                cursor: subscriptionStatus.isSubscribed ? 'default' : 'pointer',
+                                background: subscriptionStatus.isSubscribed ? 'rgba(63, 185, 80, 0.1)' : 'rgba(248, 81, 73, 0.1)',
+                                border: `1px solid ${subscriptionStatus.isSubscribed ? 'rgba(63, 185, 80, 0.3)' : 'rgba(248, 81, 73, 0.3)'}`,
+                                color: subscriptionStatus.isSubscribed ? '#3fb950' : '#f85149',
+                                marginTop: '0'
+                            }}
+                        >
+                            <span className={`subscription-dot ${subscriptionStatus.isSubscribed ? 'active' : 'expired'}`}></span>
+                            {subscriptionStatus.isSubscribed 
+                                ? `${t('subscription-active')} (${Math.floor(Number(subscriptionStatus.remainingTime) / 86400)} ${t('days')})` 
+                                : t('subscription-expired')}
+                        </button>
+                    )}
                 </div>
             )}
             
@@ -284,12 +304,18 @@ function App() {
             
             {githubUser && !walletConnected && (
                 <div style={{ display: 'block', marginTop: '16px' }}>
-                    <button 
-                        onClick={connectWallet}
-                        className="sign-button"
-                    >
-                        {t('connect-wallet')}
-                    </button>
+                    {isLoading ? (
+                        <div style={{ textAlign: 'center', padding: '20px' }}>
+                            <div className="spinner"></div>
+                        </div>
+                    ) : (
+                        <button 
+                            onClick={connectWallet}
+                            className="sign-button"
+                        >
+                            {t('connect-wallet')}
+                        </button>
+                    )}
                 </div>
             )}
             
@@ -299,10 +325,6 @@ function App() {
                         <span className="info-label">{t('wallet')}</span>
                         <span className="info-value" style={{ wordBreak: 'break-all' }}>{userAddress}</span>
                     </div>
-                    <button disabled style={{ marginTop: '12px' }}>
-                        <img src={icon('wallet')} className="icon-inline" alt="" style={{ display: 'inline-block', width: '24px', height: '24px', verticalAlign: 'middle', marginRight: '6px' }} />
-                        {t('wallet-connected')}
-                    </button>
                 </div>
             )}
             
@@ -328,16 +350,15 @@ function App() {
                     {selectedRepo && (
                         <div style={{ display: 'block', marginTop: '16px' }}>
                             <div className={`repo-status-display ${selectedRepo.hasNFT ? 'has-nft' : 'no-nft'}`}>
-                                <img 
-                                    src={icon(selectedRepo.hasNFT ? 'ir-nft' : 'nav-nft')} 
-                                    className="icon-inline" 
-                                    alt="" 
-                                    style={{ display: 'inline-block', width: '24px', height: '24px', verticalAlign: 'middle', marginRight: '6px' }}
-                                />
+                                <span dangerouslySetInnerHTML={{ __html: icon(selectedRepo.hasNFT ? 'ir-nft' : 'nav-nft') }} />
                                 {selectedRepo.hasNFT ? t('nft-linked') : t('no-nft')}
                             </div>
                             
-                            {selectedRepo.hasNFT ? (
+                            {isLoading ? (
+                                <div style={{ textAlign: 'center', padding: '20px' }}>
+                                    <div className="spinner"></div>
+                                </div>
+                            ) : selectedRepo.hasNFT ? (
                                 <button 
                                     onClick={() => navigate(`/backup?repo=${encodeURIComponent(selectedRepo.name)}`)}
                                     className="sign-button"
@@ -363,7 +384,7 @@ function App() {
             
             {error && (
                 <div className="error">
-                    <img src={icon('kluda')} className="icon-inline" alt="" style={{ display: 'inline-block', width: '24px', height: '24px', verticalAlign: 'middle', marginRight: '6px' }} />
+                    <span dangerouslySetInnerHTML={{ __html: icon('kluda') }} />
                     {error}
                 </div>
             )}
