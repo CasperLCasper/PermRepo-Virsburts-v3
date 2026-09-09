@@ -17,7 +17,7 @@ const NFT_ABI = [
 ];
 
 function icon(name) {
-    return `<img src="/icons/${name}.svg" class="icon-inline" alt="${name}">`;
+    return `<img src="/icons/${name}.svg" class="icon-inline" alt="" aria-hidden="true">`;
 }
 
 function BackupPage() {
