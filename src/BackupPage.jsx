@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import JSZip from 'jszip';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from './LanguageContext';
 import { TurboFactory } from '@ardrive/turbo-sdk/web';
 import { InjectedEthereumSigner } from '@dha-team/arbundles';
 
 const NFT_ABI = [
-    "function repositoryTokens(bytes32 repoHash) external view returns (uint256)",
     "function ownerOf(uint256 tokenId) external view returns (address)",
     "function getBackupCount(uint256 tokenId) external view returns (uint256)",
     "function getManifestURI(uint256 tokenId) external view returns (string)",
@@ -23,22 +22,31 @@ function icon(name) {
 function BackupPage() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const { currentLanguage, t, switchLanguage } = useLanguage();
+    
+    // ✅ Saņem dati no App.jsx caur location.state
+    const stateData = location.state || {};
     const [config, setConfig] = useState(null);
     const [repoName, setRepoName] = useState(searchParams.get('repo'));
-    const [tokenId, setTokenId] = useState(null);
     const [githubUser, setGithubUser] = useState(null);
-    const [userAddress, setUserAddress] = useState(null);
+    const [userAddress, setUserAddress] = useState(stateData.walletAddress || null);
     const [signer, setSigner] = useState(null);
     const [turboClient, setTurboClient] = useState(null);
-    const [walletConnected, setWalletConnected] = useState(false);
-    const [isWalletConnecting, setIsWalletConnecting] = useState(false);
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
+    const [isSigning, setIsSigning] = useState(false);
     const [backupCompleted, setBackupCompleted] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
-    const [nftInfo, setNftInfo] = useState({ tokenId: null, backupCount: null, lastManifest: null, lastMerkleRoot: null });
+    
+    // ✅ NFT info saņemts no App.jsx
+    const [nftInfo, setNftInfo] = useState({
+        tokenId: stateData.nftTokenId || null,
+        backupCount: stateData.backupCount || null,
+        lastManifest: stateData.lastManifest || null,
+        lastMerkleRoot: stateData.lastMerkleRoot || null
+    });
     
     const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState({});
     const [currentPreviousHistory, setCurrentPreviousHistory] = useState([]);
@@ -190,7 +198,6 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
-    // ✅ LABOTS: Noņemts "if (backupCompleted) return;"
     const renderStatusFromData = useCallback(() => {
         if (!lastStatusData) return;
         
@@ -217,110 +224,13 @@ function BackupPage() {
         }
     }, [lastStatusData, t]);
 
-    // ✅ LABOTS: useEffect tagad strādā arī pēc backup pabeigšanas
     useEffect(() => {
         if (lastStatusData) {
             renderStatusFromData();
         }
     }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
-    const connectWallet = useCallback(async () => {
-        try {
-            if (!window.ethereum) {
-                setError(t('connect-wallet'));
-                return;
-            }
-            
-            setIsWalletConnecting(true);
-            setStatus('');
-            setError('');
-            
-            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-            const address = accounts[0];
-            
-            await window.ethereum.request({ 
-                method: 'wallet_switchEthereumChain', 
-                params: [{ chainId: config.chainId }] 
-            });
-            
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const signerInstance = await provider.getSigner();
-            
-            const client = TurboFactory.authenticated({
-                signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
-                token: 'base-eth',
-                gatewayUrl: config.rpcUrl,
-                uploadServiceConfig: { url: config.turboUploadUrl },
-                paymentServiceConfig: { url: config.turboPaymentUrl }
-            });
-            
-            const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
-            const fullRepoName = `${githubUser}/${repoName}`;
-            const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName]));
-            const tokenIdResult = await nftContract.repositoryTokens(repoHash);
-            if (tokenIdResult === 0n) {
-                setError('Nav NFT šim repo!');
-                setIsWalletConnecting(false);
-                return;
-            }
-            const nftOwner = await nftContract.ownerOf(tokenIdResult);
-            if (nftOwner.toLowerCase() !== address.toLowerCase()) {
-                setError('NFT nepieder šim makam!');
-                setIsWalletConnecting(false);
-                return;
-            }
-            
-            const backupCount = await nftContract.getBackupCount(tokenIdResult);
-            const lastManifest = await nftContract.getManifestURI(tokenIdResult);
-            const lastMerkleRoot = await nftContract.getLastMerkleRoot(tokenIdResult);
-            
-            if (backupCount > 0n && lastManifest && lastManifest.startsWith('ar://')) {
-                const prevManifestId = lastManifest.slice(5);
-                setCurrentPreviousManifestId(prevManifestId);
-                try {
-                    const manifestResponse = await fetch(`${config.arweaveGateway}/raw/${encodeURIComponent(prevManifestId)}`);
-                    if (manifestResponse.ok) {
-                        const prevManifest = await manifestResponse.json();
-                        if (prevManifest && typeof prevManifest.paths === 'object') {
-                            setCurrentUnchangedFiles(prevManifest.paths);
-                        }
-                        if (Array.isArray(prevManifest?.history)) {
-                            setCurrentPreviousHistory(prevManifest.history);
-                        }
-                        if (prevManifest?.metadata?.backupNumber !== undefined) {
-                            setCurrentPreviousBackupNumber(prevManifest.metadata.backupNumber);
-                        }
-                        if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
-                            setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
-                        }
-                    }
-                } catch (manifestError) {
-                    console.warn('⚠️ Neizdevās ielādēt iepriekšējo manifestu:', manifestError.message);
-                }
-            }
-            
-            setSigner(signerInstance);
-            setUserAddress(address);
-            setTokenId(tokenIdResult);
-            setNftInfo({
-                tokenId: tokenIdResult.toString(),
-                backupCount: backupCount.toString(),
-                lastManifest: lastManifest || 'Nav',
-                lastMerkleRoot: lastMerkleRoot || 'Nav'
-            });
-            setTurboClient(client);
-            setWalletConnected(true);
-            setIsWalletConnecting(false);
-            
-            setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`);
-            setLastStatusData({ type: 'success', key: 'wallet-connected', address: address });
-            
-        } catch (e) {
-            setIsWalletConnecting(false);
-            setError(e.message);
-        }
-    }, [config, githubUser, repoName, t]);
-
+    // ✅ Ielādē konfigurāciju un pārbauda GitHub lietotāju
     useEffect(() => {
         const initPage = async () => {
             try {
@@ -332,16 +242,34 @@ function BackupPage() {
                     return;
                 }
                 
-                try {
-                    const userData = await apiJson('/api/github/user');
-                    if (!userData.success) {
-                        window.location.href = '/api/github/login';
-                        return;
-                    }
-                    setGithubUser(userData.user);
-                } catch (e) {
-                    setError(e.message);
+                const userData = await apiJson('/api/github/user');
+                if (!userData.success) {
+                    window.location.href = '/api/github/login';
                     return;
+                }
+                setGithubUser(userData.user);
+                
+                // ✅ Ielādē iepriekšējo manifestu, ja ir backup vēsture
+                if (nftInfo.lastManifest && nftInfo.lastManifest.startsWith('ar://')) {
+                    const prevManifestId = nftInfo.lastManifest.slice(5);
+                    setCurrentPreviousManifestId(prevManifestId);
+                    try {
+                        const manifestResponse = await fetch(`${configData.arweaveGateway}/raw/${encodeURIComponent(prevManifestId)}`);
+                        if (manifestResponse.ok) {
+                            const prevManifest = await manifestResponse.json();
+                            if (prevManifest && typeof prevManifest.paths === 'object') {
+                                setCurrentUnchangedFiles(prevManifest.paths);
+                            }
+                            if (Array.isArray(prevManifest?.history)) {
+                                setCurrentPreviousHistory(prevManifest.history);
+                            }
+                            if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
+                                setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
+                            }
+                        }
+                    } catch (manifestError) {
+                        console.warn('⚠️ Neizdevās ielādēt iepriekšējo manifestu:', manifestError.message);
+                    }
                 }
                 
             } catch (e) {
@@ -352,13 +280,59 @@ function BackupPage() {
         initPage();
     }, []);
 
-    const prepareBackup = useCallback(async () => {
-        if (!walletConnected || !turboClient) {
+    // ✅ JAUNĀ FUNKCIJA: Paraksta un sāk backup procesu
+    const signAndStartBackup = useCallback(async () => {
+        if (!window.ethereum || !userAddress) {
             setError(t('connect-wallet'));
             return;
         }
         
-        setIsWorking(true);
+        try {
+            setIsSigning(true);
+            setStatus(`${icon('upload')} ${t('signing')}`);
+            setLastStatusData({ type: 'simple', key: 'signing' });
+            setError('');
+            
+            // ✅ Izveido provider un signer
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signerInstance = await provider.getSigner();
+            setSigner(signerInstance);
+            
+            // ✅ Izveido Turbo klientu
+            const client = TurboFactory.authenticated({
+                signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
+                token: 'base-eth',
+                gatewayUrl: config.rpcUrl,
+                uploadServiceConfig: { url: config.turboUploadUrl },
+                paymentServiceConfig: { url: config.turboPaymentUrl }
+            });
+            setTurboClient(client);
+            
+            // ✅ Pārbauda, vai NFT pieder šim makam
+            const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
+            const nftOwner = await nftContract.ownerOf(BigInt(nftInfo.tokenId));
+            if (nftOwner.toLowerCase() !== userAddress.toLowerCase()) {
+                throw new Error('NFT nepieder šim makam!');
+            }
+            
+            // ✅ Pēc parakstīšanas automātiski sāk backup
+            await prepareBackup(client, signerInstance);
+            
+        } catch (e) {
+            console.error('=== KĻŪDA ===');
+            console.error('Ziņojums:', e.message);
+            
+            if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
+                setError(t('transaction-cancelled'));
+            } else {
+                setError(e.message);
+            }
+            setIsSigning(false);
+        }
+    }, [config, userAddress, nftInfo.tokenId, t]);
+
+    // ✅ MODIFICĒTA: prepareBackup tagad saņem turboClient un signer kā parametrus
+    const prepareBackup = useCallback(async (client, signerInstance) => {
         setStatus(`${icon('upload')} ${t('preparing')}`);
         setLastStatusData({ type: 'simple', key: 'preparing' });
         setError('');
@@ -375,7 +349,7 @@ function BackupPage() {
                 keyHex = await promptMasterKey();
                 if (!isValidMasterKey(keyHex)) {
                     setError(t('encrypted-required'));
-                    setIsWorking(false);
+                    setIsSigning(false);
                     return;
                 }
             }
@@ -391,7 +365,7 @@ function BackupPage() {
             if (files.length === 0) {
                 setStatus(`${icon('izdevas-veiksmigi')} ${t('no-changes')}`);
                 setLastStatusData({ type: 'simple', key: 'no-changes' });
-                setIsWorking(false);
+                setIsSigning(false);
                 return;
             }
             
@@ -410,7 +384,7 @@ function BackupPage() {
             if (changedFiles.length === 0) {
                 setStatus(`${icon('izdevas-veiksmigi')} ${t('no-changes')}`);
                 setLastStatusData({ type: 'simple', key: 'no-changes' });
-                setIsWorking(false);
+                setIsSigning(false);
                 return;
             }
             
@@ -426,15 +400,23 @@ function BackupPage() {
             
             await new Promise(resolve => setTimeout(resolve, 2000));
             
-            await uploadZip(result.jobId, changedFiles, unchangedFiles, keyHex);
+            await uploadZip(result.jobId, changedFiles, unchangedFiles, keyHex, client, signerInstance);
             
         } catch (e) {
-            setError(e.message);
-            setIsWorking(false);
+            console.error('=== KĻŪDA ===');
+            console.error('Ziņojums:', e.message);
+            
+            if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
+                setError(t('transaction-cancelled'));
+            } else {
+                setError(e.message);
+            }
+            setIsSigning(false);
         }
-    }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, walletConnected, turboClient]);
+    }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey]);
 
-    const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex) => {
+    // ✅ MODIFICĒTA: uploadZip saņem client un signerInstance kā parametrus
+    const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex, client, signerInstance) => {
         setStatus(t('creating-zip'));
         setLastStatusData({ type: 'simple', key: 'creating-zip' });
         
@@ -471,7 +453,7 @@ function BackupPage() {
             
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             
-            const zipResult = await turboClient.uploadFile({
+            const zipResult = await client.uploadFile({
                 fileStreamFactory: () => zipBlob.stream(),
                 fileSizeFactory: () => zipBlob.size,
                 dataItemOpts: {
@@ -546,7 +528,7 @@ function BackupPage() {
             
             const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
             
-            const manifestResult = await turboClient.uploadFile({
+            const manifestResult = await client.uploadFile({
                 fileStreamFactory: () => manifestBlob.stream(),
                 fileSizeFactory: () => manifestBlob.size,
                 dataItemOpts: {
@@ -602,9 +584,9 @@ function BackupPage() {
                 nonce: currentNonce
             };
             
-            const signature = await signer.signTypedData(domain, types, value);
+            const signature = await signerInstance.signTypedData(domain, types, value);
             
-            const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, signer);
+            const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, signerInstance);
             const tx = await nftWrite.addBackup(
                 BigInt(nftInfo.tokenId),
                 manifestHash,
@@ -629,7 +611,6 @@ function BackupPage() {
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             
-            // ✅ LABOTS: Status tiek iestatīts caur lastStatusData, lai valodas maiņa strādātu
             setStatus(`${icon('izdevas-veiksmigi')} ${t('backup-complete')}`);
             setLastStatusData({ type: 'success', key: 'backup-complete' });
             
@@ -643,9 +624,9 @@ function BackupPage() {
                 setError(e.message);
             }
         } finally {
-            setIsWorking(false);
+            setIsSigning(false);
         }
-    }, [apiJson, t, turboClient, signer, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData]);
+    }, [apiJson, t, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData]);
 
     if (!config) {
         return (
@@ -688,40 +669,29 @@ function BackupPage() {
                 <span className="info-value">{nftInfo.lastMerkleRoot || '-'}</span>
             </div>
             
-            {!walletConnected ? (
-                <div style={{ marginTop: '20px' }}>
-                    {isWalletConnecting ? (
+            {!backupCompleted ? (
+                <button 
+                    onClick={signAndStartBackup}
+                    disabled={isSigning}
+                    className="sign-button"
+                    style={{ marginTop: '20px' }}
+                >
+                    {isSigning ? (
                         <div style={{ textAlign: 'center' }}>
                             <div className="spinner"></div>
                         </div>
                     ) : (
-                        <button 
-                            onClick={connectWallet}
-                            className="sign-button"
-                        >
-                            {t('connect-wallet')}
-                        </button>
+                        t('start-backup')
                     )}
-                </div>
+                </button>
             ) : (
-                !backupCompleted ? (
-                    <button 
-                        onClick={prepareBackup}
-                        disabled={isWorking || !turboClient}
-                        className="sign-button"
-                        style={{ marginTop: '20px' }}
-                    >
-                        {isWorking ? '⏳' : t('start-backup')}
-                    </button>
-                ) : (
-                    <button 
-                        onClick={() => navigate('/')}
-                        className="sign-button"
-                        style={{ marginTop: '20px' }}
-                    >
-                        {t('back-home')}
-                    </button>
-                )
+                <button 
+                    onClick={() => navigate('/')}
+                    className="sign-button"
+                    style={{ marginTop: '20px' }}
+                >
+                    {t('back-home')}
+                </button>
             )}
             
             {status && (
