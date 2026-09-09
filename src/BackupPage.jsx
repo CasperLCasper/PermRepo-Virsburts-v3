@@ -35,7 +35,6 @@ function BackupPage() {
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
-    const [isSigning, setIsSigning] = useState(false);
     const [backupCompleted, setBackupCompleted] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
     
@@ -246,7 +245,6 @@ function BackupPage() {
                 }
                 setGithubUser(userData.user);
                 
-                // ✅ Izmanto configData (nevis config) un pārbauda, vai arweaveGateway eksistē
                 if (nftInfo.lastManifest && nftInfo.lastManifest.startsWith('ar://') && configData?.arweaveGateway) {
                     const prevManifestId = nftInfo.lastManifest.slice(5);
                     setCurrentPreviousManifestId(prevManifestId);
@@ -277,8 +275,8 @@ function BackupPage() {
         initPage();
     }, []);
 
-    const signAndStartBackup = useCallback(async () => {
-        // ✅ Pārbauda, vai config ir ielādēts
+    // ✅ "Turpināt backupu" — bez paraksta sākumā (paraksts jau bija App.jsx)
+    const continueBackup = useCallback(async () => {
         if (!config) {
             setError('Konfigurācija vēl nav ielādēta!');
             return;
@@ -290,9 +288,7 @@ function BackupPage() {
         }
         
         try {
-            setIsSigning(true);
-            setStatus(`${icon('upload')} ${t('signing')}`);
-            setLastStatusData({ type: 'simple', key: 'signing' });
+            setIsWorking(true);
             setError('');
             
             const provider = new ethers.BrowserProvider(window.ethereum);
@@ -308,39 +304,7 @@ function BackupPage() {
             });
             setTurboClient(client);
             
-            const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
-            const nftOwner = await nftContract.ownerOf(BigInt(nftInfo.tokenId));
-            if (nftOwner.toLowerCase() !== userAddress.toLowerCase()) {
-                throw new Error('NFT nepieder šim makam!');
-            }
-            
-            await prepareBackup(client, signerInstance);
-            
-        } catch (e) {
-            console.error('=== KĻŪDA ===');
-            console.error('Ziņojums:', e.message);
-            
-            if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
-                setError(t('transaction-cancelled'));
-            } else {
-                setError(e.message);
-            }
-            setIsSigning(false);
-        }
-    }, [config, userAddress, nftInfo.tokenId, t]);
-
-    const prepareBackup = useCallback(async (client, signerInstance) => {
-        // ✅ Pārbauda, vai config ir ielādēts
-        if (!config) {
-            setError('Konfigurācija nav ielādēta!');
-            return;
-        }
-        
-        setStatus(`${icon('upload')} ${t('preparing')}`);
-        setLastStatusData({ type: 'simple', key: 'preparing' });
-        setError('');
-        
-        try {
+            // Master Key ievadīšana
             const backupCount = Number(nftInfo.backupCount || 0);
             let keyHex;
             
@@ -352,10 +316,14 @@ function BackupPage() {
                 keyHex = await promptMasterKey();
                 if (!isValidMasterKey(keyHex)) {
                     setError(t('encrypted-required'));
-                    setIsSigning(false);
+                    setIsWorking(false);
                     return;
                 }
             }
+            
+            // Iegūst failus
+            setStatus(`${icon('upload')} ${t('preparing')}`);
+            setLastStatusData({ type: 'simple', key: 'preparing' });
             
             const result = await apiJson('/api/prepare-backup', {
                 method: 'POST',
@@ -368,7 +336,7 @@ function BackupPage() {
             if (files.length === 0) {
                 setStatus(`${icon('izdevas-veiksmigi')} ${t('no-changes')}`);
                 setLastStatusData({ type: 'simple', key: 'no-changes' });
-                setIsSigning(false);
+                setIsWorking(false);
                 return;
             }
             
@@ -387,10 +355,11 @@ function BackupPage() {
             if (changedFiles.length === 0) {
                 setStatus(`${icon('izdevas-veiksmigi')} ${t('no-changes')}`);
                 setLastStatusData({ type: 'simple', key: 'no-changes' });
-                setIsSigning(false);
+                setIsWorking(false);
                 return;
             }
             
+            // ✅ PARĀDA MAINĪTO FAILU SKAITU UN IZMĒRU — TIKAI ŠEIT!
             const sizeText = formatFileSize(
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
@@ -414,12 +383,12 @@ function BackupPage() {
             } else {
                 setError(e.message);
             }
-            setIsSigning(false);
+            setIsWorking(false);
         }
-    }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, config]);
+    }, [config, userAddress, nftInfo.backupCount, repoName, t, formatFileSize, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, apiJson]);
 
+    // ✅ Augšupielāde ar EIP-712 parakstu BEIGĀS
     const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex, client, signerInstance) => {
-        // ✅ Pārbauda, vai config ir ielādēts
         if (!config) {
             setError('Konfigurācija nav ielādēta!');
             return;
@@ -461,6 +430,7 @@ function BackupPage() {
             
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             
+            // ✅ 2. PARAKSTS: ZIP augšupielāde
             const zipResult = await client.uploadFile({
                 fileStreamFactory: () => zipBlob.stream(),
                 fileSizeFactory: () => zipBlob.size,
@@ -536,6 +506,7 @@ function BackupPage() {
             
             const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
             
+            // ✅ 3. PARAKSTS: Manifesta augšupielāde
             const manifestResult = await client.uploadFile({
                 fileStreamFactory: () => manifestBlob.stream(),
                 fileSizeFactory: () => manifestBlob.size,
@@ -561,6 +532,7 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, manifestTxId, manifest })
             });
             
+            // ✅ 4. PARAKSTS: EIP-712 paraksts (pēc manifesta augšupielādes)
             setStatus(t('signing'));
             setLastStatusData({ type: 'simple', key: 'signing' });
             
@@ -592,8 +564,10 @@ function BackupPage() {
                 nonce: currentNonce
             };
             
+            // ✅ EIP-712 PARAKSTS
             const signature = await signerInstance.signTypedData(domain, types, value);
             
+            // ✅ 5. PARAKSTS: NFT transakcija ar gāzi
             const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, signerInstance);
             const tx = await nftWrite.addBackup(
                 BigInt(nftInfo.tokenId),
@@ -632,7 +606,7 @@ function BackupPage() {
                 setError(e.message);
             }
         } finally {
-            setIsSigning(false);
+            setIsWorking(false);
         }
     }, [apiJson, t, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData]);
 
@@ -679,17 +653,17 @@ function BackupPage() {
             
             {!backupCompleted ? (
                 <button 
-                    onClick={signAndStartBackup}
-                    disabled={isSigning}
+                    onClick={continueBackup}
+                    disabled={isWorking}
                     className="sign-button"
                     style={{ marginTop: '20px' }}
                 >
-                    {isSigning ? (
+                    {isWorking ? (
                         <div style={{ textAlign: 'center' }}>
                             <div className="spinner"></div>
                         </div>
                     ) : (
-                        t('start-backup')
+                        t('continue-backup')
                     )}
                 </button>
             ) : (
