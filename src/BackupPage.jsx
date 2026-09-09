@@ -190,8 +190,8 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
+    // ✅ LABOTS: Noņemts "if (backupCompleted) return;"
     const renderStatusFromData = useCallback(() => {
-        if (backupCompleted) return;
         if (!lastStatusData) return;
         
         const data = lastStatusData;
@@ -215,11 +215,14 @@ function BackupPage() {
             default:
                 setStatus(t(data.key));
         }
-    }, [backupCompleted, lastStatusData, t]);
+    }, [lastStatusData, t]);
 
+    // ✅ LABOTS: useEffect tagad strādā arī pēc backup pabeigšanas
     useEffect(() => {
-        renderStatusFromData();
-    }, [currentLanguage, renderStatusFromData]);
+        if (lastStatusData) {
+            renderStatusFromData();
+        }
+    }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
     const connectWallet = useCallback(async () => {
         try {
@@ -626,6 +629,7 @@ function BackupPage() {
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             
+            // ✅ LABOTS: Status tiek iestatīts caur lastStatusData, lai valodas maiņa strādātu
             setStatus(`${icon('izdevas-veiksmigi')} ${t('backup-complete')}`);
             setLastStatusData({ type: 'success', key: 'backup-complete' });
             
