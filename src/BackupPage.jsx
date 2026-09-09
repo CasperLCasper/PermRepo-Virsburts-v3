@@ -55,7 +55,6 @@ function BackupPage() {
     
     const [lastStatusData, setLastStatusData] = useState(null);
     
-    // ✅ Failu info — ielādēts UZREIZ, kad lapa atveras
     const [fileInfo, setFileInfo] = useState({ count: 0, sizeText: '', loading: true });
     const [changedFilesForUpload, setChangedFilesForUpload] = useState([]);
     const [unchangedFilesForUpload, setUnchangedFilesForUpload] = useState({});
@@ -227,7 +226,7 @@ function BackupPage() {
         }
     }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
-    // ✅ UZREIZ IELĀDĒ FAILU INFO, KAD LAPA ATVERAS
+    // ✅ LABOTS: Pareiza secība — vispirms manifests, TAD failu salīdzināšana
     useEffect(() => {
         const initPage = async () => {
             try {
@@ -235,7 +234,7 @@ function BackupPage() {
                 
                 const configData = await apiJson('/api/config');
                 setConfig(configData);
-                console.log('✅ DEBUG: Config ielādēts:', configData);
+                console.log('✅ DEBUG: Config ielādēts');
                 
                 if (!repoName) {
                     setError('Nav repo nosaukuma URL parametrā!');
@@ -250,22 +249,30 @@ function BackupPage() {
                 setGithubUser(userData.user);
                 console.log('✅ DEBUG: GitHub lietotājs:', userData.user);
                 
-                // Ielādē iepriekšējo manifestu, ja ir vēsture
+                // ✅ 1. SOLIS: Vispirms ielādē iepriekšējo manifestu
+                let previousPaths = {};
+                let previousHistory = [];
+                let previousEncryptionIVs = {};
+                
                 if (nftInfo.lastManifest && nftInfo.lastManifest.startsWith('ar://') && configData?.arweaveGateway) {
                     const prevManifestId = nftInfo.lastManifest.slice(5);
                     setCurrentPreviousManifestId(prevManifestId);
                     console.log('🔵 DEBUG: Ielādē iepriekšējo manifestu:', prevManifestId);
+                    
                     try {
                         const manifestResponse = await fetch(`${configData.arweaveGateway}/raw/${encodeURIComponent(prevManifestId)}`);
                         if (manifestResponse.ok) {
                             const prevManifest = await manifestResponse.json();
                             if (prevManifest && typeof prevManifest.paths === 'object') {
+                                previousPaths = prevManifest.paths;
                                 setCurrentUnchangedFiles(prevManifest.paths);
                             }
                             if (Array.isArray(prevManifest?.history)) {
+                                previousHistory = prevManifest.history;
                                 setCurrentPreviousHistory(prevManifest.history);
                             }
                             if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
+                                previousEncryptionIVs = prevManifest.encryption.ivs;
                                 setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
                             }
                         }
@@ -274,8 +281,8 @@ function BackupPage() {
                     }
                 }
                 
-                // ✅ UZREIZ IEGŪST FAILU INFO
-                console.log('🔵 DEBUG: Iegūst failu info no /api/prepare-backup...');
+                // ✅ 2. SOLIS: Tagad iegūst failus un salīdzina ar iepriekšējiem
+                console.log('🔵 DEBUG: Iegūst failus no /api/prepare-backup...');
                 const result = await apiJson('/api/prepare-backup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -284,19 +291,25 @@ function BackupPage() {
                 
                 const files = result.files || [];
                 console.log('✅ DEBUG: Iegūti faili:', files.length);
+                console.log('✅ DEBUG: Iepriekšējie faili:', Object.keys(previousPaths).length);
                 
-                // Nosaka mainītos failus
+                // ✅ 3. SOLIS: Salīdzina — nosaka mainītos un nemainītos failus
                 const changedFiles = [];
                 const unchangedFiles = {};
                 
                 for (const file of files) {
-                    const previousFile = currentUnchangedFiles[file.path];
+                    const previousFile = previousPaths[file.path];
                     if (previousFile && previousFile.hash && previousFile.hash === file.hash) {
+                        // Fails NAV mainījies — izmanto iepriekšējo
                         unchangedFiles[file.path] = { id: previousFile.id || previousFile.zipId, hash: file.hash };
                     } else {
+                        // Fails IR mainījies — jāaugšupielādē
                         changedFiles.push(file);
                     }
                 }
+                
+                console.log('✅ DEBUG: Mainītie faili:', changedFiles.length);
+                console.log('✅ DEBUG: Nemainītie faili:', Object.keys(unchangedFiles).length);
                 
                 const sizeText = formatFileSize(
                     changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
@@ -307,7 +320,7 @@ function BackupPage() {
                 setUnchangedFilesForUpload(unchangedFiles);
                 setPreparedJobId(result.jobId);
                 
-                console.log('✅ DEBUG: Mainītie faili:', changedFiles.length, 'Izmērs:', sizeText);
+                console.log('✅ DEBUG: Failu info ielādēts:', changedFiles.length, sizeText);
                 
             } catch (e) {
                 console.error('🔴 DEBUG: initPage kļūda:', e.message);
@@ -319,24 +332,21 @@ function BackupPage() {
         initPage();
     }, []);
 
-    // ✅ "Turpināt backupu" — sāk procesu ar jau ielādētiem datiem
+    // ✅ "Turpināt backupu" — izmanto jau sagatavotos inkrementālos datus
     const continueBackup = useCallback(async () => {
         console.log('🔵 DEBUG: Nospiesta poga "Turpināt backupu"');
         
         if (!config) {
-            console.log('🔴 DEBUG: Config nav ielādēts!');
             setError('Konfigurācija vēl nav ielādēta!');
             return;
         }
         
         if (!window.ethereum || !userAddress) {
-            console.log('🔴 DEBUG: Nav maka!');
             setError(t('connect-wallet'));
             return;
         }
         
         if (changedFilesForUpload.length === 0) {
-            console.log('🟡 DEBUG: Nav mainīto failu!');
             setStatus(`${icon('izdevas-veiksmigi')} ${t('no-changes')}`);
             setLastStatusData({ type: 'simple', key: 'no-changes' });
             return;
@@ -348,7 +358,6 @@ function BackupPage() {
             
             console.log('🔵 DEBUG: 1. Pārbauda tīklu...');
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-            console.log('   Pašreizējais tīkls:', currentChainId);
             
             if (parseInt(currentChainId, 16) !== Number(config.chainId)) {
                 console.log('🔵 DEBUG: 2. Maina tīklu...');
@@ -408,7 +417,7 @@ function BackupPage() {
                 }
             }
             
-            console.log('🔵 DEBUG: 6. Sāk ZIP izveidi un augšupielādi...');
+            console.log('🔵 DEBUG: 6. Sāk ZIP izveidi ar', changedFilesForUpload.length, 'mainītajiem failiem...');
             await uploadZip(preparedJobId, changedFilesForUpload, unchangedFilesForUpload, keyHex, client, signerInstance);
             
         } catch (e) {
@@ -423,9 +432,9 @@ function BackupPage() {
         }
     }, [config, userAddress, nftInfo.backupCount, repoName, t, changedFilesForUpload, unchangedFilesForUpload, preparedJobId, showMasterKey, promptMasterKey, isValidMasterKey]);
 
-    // ✅ Augšupielāde ar EIP-712 parakstu beigās
+    // ✅ Augšupielāde ar inkrementālo loģiku
     const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex, client, signerInstance) => {
-        console.log('🔵 DEBUG: uploadZip sākas...');
+        console.log('🔵 DEBUG: uploadZip sākas ar', changedFiles.length, 'mainītajiem failiem...');
         
         if (!config) {
             setError('Konfigurācija nav ielādēta!');
@@ -436,8 +445,9 @@ function BackupPage() {
         setLastStatusData({ type: 'simple', key: 'creating-zip' });
         
         try {
-            console.log('🔵 DEBUG: 7. ZIP izveide...');
             const zip = new JSZip();
+            
+            // ✅ ZIP satur TIKAI mainītos failus
             for (const file of changedFiles) {
                 const binaryString = atob(file.content);
                 const fileBuffer = new Uint8Array(binaryString.length);
@@ -453,7 +463,8 @@ function BackupPage() {
                 compressionOptions: { level: 6 }
             });
             
-            console.log('🔵 DEBUG: 8. ZIP šifrēšana...');
+            console.log('🔵 DEBUG: ZIP izveidots ar', changedFiles.length, 'failiem');
+            
             setStatus(t('encrypting'));
             setLastStatusData({ type: 'simple', key: 'encrypting' });
             
@@ -465,12 +476,14 @@ function BackupPage() {
             setCurrentIV(iv);
             setCurrentMerkleRoot(merkleRoot);
             
-            console.log('🔵 DEBUG: 9. ZIP augšupielāde caur Turbo (PARAKSTS #2)...');
+            console.log('🔵 DEBUG: ZIP šifrēts, Merkle root:', merkleRoot);
+            
             setStatus(`${icon('upload')} ${t('uploading')}`);
             setLastStatusData({ type: 'uploading' });
             
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             
+            console.log('🔵 DEBUG: ZIP augšupielāde caur Turbo (PARAKSTS #2)...');
             const zipResult = await client.uploadFile({
                 fileStreamFactory: () => zipBlob.stream(),
                 fileSizeFactory: () => zipBlob.size,
@@ -498,7 +511,7 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, zipTxId })
             });
             
-            console.log('🔵 DEBUG: 10. Manifesta izveide...');
+            console.log('🔵 DEBUG: Manifesta izveide...');
             setStatus(t('manifest-ready'));
             setLastStatusData({ type: 'simple', key: 'manifest-ready' });
             
@@ -520,6 +533,7 @@ function BackupPage() {
                 encryptionIVs[zipTxId] = Array.from(iv);
             }
             
+            // ✅ Manifests satur VISUS failus (mainītos + nemainītos)
             const manifest = {
                 manifest: 'arweave/paths',
                 version: '0.2.0',
@@ -533,10 +547,12 @@ function BackupPage() {
                 history
             };
             
+            // ✅ Mainītie faili norāda uz jauno ZIP
             for (const file of changedFiles) {
                 manifest.paths[file.path] = { id: zipTxId, hash: file.hash };
             }
             
+            // ✅ Nemainītie faili norāda uz iepriekšējiem ZIP
             for (const [filePath, info] of Object.entries(unchangedFiles)) {
                 manifest.paths[filePath] = { id: info.id, hash: info.hash };
             }
@@ -548,7 +564,7 @@ function BackupPage() {
             
             const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
             
-            console.log('🔵 DEBUG: 11. Manifesta augšupielāde caur Turbo (PARAKSTS #3)...');
+            console.log('🔵 DEBUG: Manifesta augšupielāde caur Turbo (PARAKSTS #3)...');
             const manifestResult = await client.uploadFile({
                 fileStreamFactory: () => manifestBlob.stream(),
                 fileSizeFactory: () => manifestBlob.size,
@@ -575,7 +591,7 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, manifestTxId, manifest })
             });
             
-            console.log('🔵 DEBUG: 12. EIP-712 paraksts (PARAKSTS #4)...');
+            console.log('🔵 DEBUG: EIP-712 paraksts (PARAKSTS #4)...');
             setStatus(t('signing'));
             setLastStatusData({ type: 'simple', key: 'signing' });
             
@@ -610,7 +626,7 @@ function BackupPage() {
             const signature = await signerInstance.signTypedData(domain, types, value);
             console.log('✅ DEBUG: EIP-712 paraksts iegūts');
             
-            console.log('🔵 DEBUG: 13. NFT transakcija ar gāzi (PARAKSTS #5)...');
+            console.log('🔵 DEBUG: NFT transakcija ar gāzi (PARAKSTS #5)...');
             const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, signerInstance);
             const tx = await nftWrite.addBackup(
                 BigInt(nftInfo.tokenId),
@@ -695,11 +711,11 @@ function BackupPage() {
                 <span className="info-value">{nftInfo.lastMerkleRoot || '-'}</span>
             </div>
             
-            {/* ✅ FAILU INFO — RĀDĀS UZREIZ AR POGU */}
+            {/* ✅ FAILU INFO AR IKONĀM */}
             <div className="info-row text-left">
                 <span className="info-label">
                     <span dangerouslySetInnerHTML={{ __html: icon('fails') }} />
-                    {t('files-count')}
+                    {t('files-count')}:
                 </span>
                 <span className="info-value">
                     {fileInfo.loading ? '...' : fileInfo.count}
@@ -709,7 +725,7 @@ function BackupPage() {
             <div className="info-row text-left">
                 <span className="info-label">
                     <span dangerouslySetInnerHTML={{ __html: icon('fails') }} />
-                    {t('files-size')}
+                    {t('files-size')}:
                 </span>
                 <span className="info-value">
                     {fileInfo.loading ? '...' : fileInfo.sizeText}
