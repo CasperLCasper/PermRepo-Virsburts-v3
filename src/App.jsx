@@ -44,6 +44,7 @@ function App() {
     const [error, setError] = useState('');
     const [lastStatusData, setLastStatusData] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [isSigningForBackup, setIsSigningForBackup] = useState(false);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -115,7 +116,6 @@ function App() {
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
             const address = accounts[0];
             
-            // Pārbaudam tīklu bez lieka izlēciena
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
             
             if (parseInt(currentChainId, 16) !== Number(config.chainId)) {
@@ -167,7 +167,6 @@ function App() {
                 const tokenId = await nftContract.repositoryTokens(repoHash);
                 
                 if (tokenId !== 0n) {
-                    // ✅ Iegūstam papildu NFT datus
                     try {
                         const backupCount = await nftContract.getBackupCount(tokenId);
                         const lastManifest = await nftContract.getManifestURI(tokenId);
@@ -233,6 +232,52 @@ function App() {
             }
         }
     }, [config, githubUser, userAddress, connectWallet]);
+
+    // ✅ JAUNĀ FUNKCIJA: "Izveidot backupu" ar Standarta maka parakstu
+    const createBackup = useCallback(async (repo) => {
+        if (!window.ethereum || !userAddress) {
+            setError(t('connect-wallet'));
+            return;
+        }
+        
+        try {
+            setIsSigningForBackup(true);
+            setError('');
+            
+            // ✅ STANDARTA MAKA PARAKSTS (1. paraksts)
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signerInstance = await provider.getSigner();
+            
+            // Pieprasa parakstu, lai pierādītu maka kontroli
+            const message = `Paraksti, lai turpinātu backupa izveidi repo: ${repo.name}`;
+            const signature = await signerInstance.signMessage(message);
+            
+            console.log('✅ Standarta paraksts iegūts:', signature);
+            
+            // ✅ Tagad navigē uz BackupPage ar visiem datiem
+            navigate(`/backup?repo=${encodeURIComponent(repo.name)}`, {
+                state: {
+                    walletAddress: userAddress,
+                    nftTokenId: repo.tokenId,
+                    backupCount: repo.backupCount,
+                    lastManifest: repo.lastManifest,
+                    lastMerkleRoot: repo.lastMerkleRoot,
+                    standardSignature: signature
+                }
+            });
+            
+        } catch (e) {
+            console.error('=== KĻŪDA ===');
+            console.error('Ziņojums:', e.message);
+            
+            if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
+                setError(t('transaction-cancelled'));
+            } else {
+                setError(e.message);
+            }
+            setIsSigningForBackup(false);
+        }
+    }, [userAddress, navigate, t]);
 
     useEffect(() => {
         if (lastStatusData && lastStatusData.type === 'wallet-connected' && walletConnected) {
@@ -401,21 +446,13 @@ function App() {
                                 {selectedRepo.hasNFT ? t('nft-linked') : t('no-nft')}
                             </div>
                             
-                            {isLoading ? (
+                            {isSigningForBackup ? (
                                 <div style={{ textAlign: 'center', padding: '20px' }}>
                                     <div className="spinner"></div>
                                 </div>
                             ) : selectedRepo.hasNFT ? (
                                 <button 
-                                    onClick={() => navigate(`/backup?repo=${encodeURIComponent(selectedRepo.name)}`, {
-                                        state: {
-                                            walletAddress: userAddress,
-                                            nftTokenId: selectedRepo.tokenId,
-                                            backupCount: selectedRepo.backupCount,
-                                            lastManifest: selectedRepo.lastManifest,
-                                            lastMerkleRoot: selectedRepo.lastMerkleRoot
-                                        }
-                                    })}
+                                    onClick={() => createBackup(selectedRepo)}
                                     className="sign-button"
                                 >
                                     {t('open-backup')}
