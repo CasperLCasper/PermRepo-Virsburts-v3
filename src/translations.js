@@ -22,7 +22,7 @@ export const translations = {
         'backup-count': 'Backupu skaits',
         'last-manifest': 'Pēdējais manifests',
         'last-merkle': 'Pēdējā Merkle sakne',
-        'start-backup': 'Sākt backupu',
+        'start-backup': 'Parakstīt un turpināt backupa izveidi',
         'preparing': 'Sagatavo backupu...',
         'no-changes': 'Nav izmaiņu — visi faili jau ir backupēti!',
         'generate-key': 'Ģenerē master atslēgu...',
@@ -49,7 +49,8 @@ export const translations = {
         'manifest-ready': 'Manifests gatavs',
         'confirm-key': 'Apstiprināt',
         'cancel': 'Atcelt',
-        'back-home': 'Atgriezties uz sākumu'
+        'back-home': 'Atgriezties uz sākumu',
+        'sign-continue': 'Parakstīt un turpināt backupa izveidi'
     },
     en: {
         subtitle: 'GitHub repo backups to Arweave',
@@ -74,7 +75,7 @@ export const translations = {
         'backup-count': 'Backup count',
         'last-manifest': 'Last manifest',
         'last-merkle': 'Last Merkle root',
-        'start-backup': 'Start backup',
+        'start-backup': 'Sign and continue backup creation',
         'preparing': 'Preparing backup...',
         'no-changes': 'No changes — all files already backed up!',
         'generate-key': 'Generating master key...',
@@ -101,7 +102,8 @@ export const translations = {
         'manifest-ready': 'Manifest ready',
         'confirm-key': 'Confirm',
         'cancel': 'Cancel',
-        'back-home': 'Back to home'
+        'back-home': 'Back to home',
+        'sign-continue': 'Sign and continue backup creation'
     },
     eo: {
         subtitle: 'GitHub-repozitorio sekurkopioj al Arweave',
@@ -126,7 +128,7 @@ export const translations = {
         'backup-count': 'Nombro de sekurkopioj',
         'last-manifest': 'Lasta manifesto',
         'last-merkle': 'Lasta Merkle-radiko',
-        'start-backup': 'Komenci sekurkopion',
+        'start-backup': 'Subskribu kaj daŭrigu sekurkopion',
         'preparing': 'Preparante sekurkopion...',
         'no-changes': 'Neniu ŝanĝo — ĉiuj dosieroj jam sekurkopiitaj!',
         'generate-key': 'Generante ĉefŝlosilon...',
@@ -153,6 +155,7 @@ export const translations = {
         'manifest-ready': 'Manifesto preta',
         'confirm-key': 'Konfirmi',
         'cancel': 'Nuligi',
-        'back-home': 'Reen al hejmo'
+        'back-home': 'Reen al hejmo',
+        'sign-continue': 'Subskribu kaj daŭrigu sekurkopion'
     }
 };
