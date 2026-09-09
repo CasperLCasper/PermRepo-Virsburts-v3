@@ -6,7 +6,10 @@ import { useLanguage } from './LanguageContext';
 const NFT_ABI = [
     "function mintRepository(address recipient, string calldata repository, string calldata uri) external returns (uint256)",
     "function repositoryTokens(bytes32 repoHash) external view returns (uint256)",
-    "function ownerOf(uint256 tokenId) external view returns (address)"
+    "function ownerOf(uint256 tokenId) external view returns (address)",
+    "function getBackupCount(uint256 tokenId) external view returns (uint256)",
+    "function getManifestURI(uint256 tokenId) external view returns (string)",
+    "function getLastMerkleRoot(uint256 tokenId) external view returns (bytes32)"
 ];
 
 const SUBSCRIPTION_ABI = [
@@ -112,10 +115,33 @@ function App() {
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
             const address = accounts[0];
             
-            await window.ethereum.request({ 
-                method: 'wallet_switchEthereumChain', 
-                params: [{ chainId: config.chainId }] 
-            });
+            // Pārbaudam tīklu bez lieka izlēciena
+            const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+            
+            if (parseInt(currentChainId, 16) !== Number(config.chainId)) {
+                try {
+                    await window.ethereum.request({ 
+                        method: 'wallet_switchEthereumChain', 
+                        params: [{ chainId: config.chainId }] 
+                    });
+                } catch (switchError) {
+                    if (switchError.code === 4902) {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [{
+                                chainId: config.chainId,
+                                chainName: 'Base',
+                                rpcUrls: [config.rpcUrl],
+                                nativeCurrency: {
+                                    name: 'ETH',
+                                    symbol: 'ETH',
+                                    decimals: 18
+                                }
+                            }]
+                        });
+                    }
+                }
+            }
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signerInstance = await provider.getSigner();
@@ -139,7 +165,28 @@ function App() {
                     ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName])
                 );
                 const tokenId = await nftContract.repositoryTokens(repoHash);
-                reposWithStatus.push({ ...repo, hasNFT: tokenId !== 0n });
+                
+                if (tokenId !== 0n) {
+                    // ✅ Iegūstam papildu NFT datus
+                    try {
+                        const backupCount = await nftContract.getBackupCount(tokenId);
+                        const lastManifest = await nftContract.getManifestURI(tokenId);
+                        const lastMerkleRoot = await nftContract.getLastMerkleRoot(tokenId);
+                        
+                        reposWithStatus.push({ 
+                            ...repo, 
+                            hasNFT: true,
+                            tokenId: tokenId.toString(),
+                            backupCount: backupCount.toString(),
+                            lastManifest: lastManifest || 'Nav',
+                            lastMerkleRoot: lastMerkleRoot || 'Nav'
+                        });
+                    } catch (nftError) {
+                        reposWithStatus.push({ ...repo, hasNFT: true, tokenId: tokenId.toString() });
+                    }
+                } else {
+                    reposWithStatus.push({ ...repo, hasNFT: false });
+                }
             }
             
             setReposData(reposWithStatus);
@@ -360,7 +407,15 @@ function App() {
                                 </div>
                             ) : selectedRepo.hasNFT ? (
                                 <button 
-                                    onClick={() => navigate(`/backup?repo=${encodeURIComponent(selectedRepo.name)}`)}
+                                    onClick={() => navigate(`/backup?repo=${encodeURIComponent(selectedRepo.name)}`, {
+                                        state: {
+                                            walletAddress: userAddress,
+                                            nftTokenId: selectedRepo.tokenId,
+                                            backupCount: selectedRepo.backupCount,
+                                            lastManifest: selectedRepo.lastManifest,
+                                            lastMerkleRoot: selectedRepo.lastMerkleRoot
+                                        }
+                                    })}
                                     className="sign-button"
                                 >
                                     {t('open-backup')}
