@@ -16,7 +16,6 @@ const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external"
 ];
 
-// ✅ PAREIZĀ icon() funkcija - atgriež HTML:
 function icon(name) {
     return `<img src="/icons/${name}.svg" class="icon-inline" alt="${name}">`;
 }
@@ -191,12 +190,8 @@ function BackupPage() {
         });
     }, [t, repoName]);
 
-    // ✅ renderStatusFromData - ģenerē ziņojumu no DATIEM ar PAREIZO valodu:
     const renderStatusFromData = useCallback(() => {
-        if (backupCompleted) {
-            return;
-        }
-        
+        if (backupCompleted) return;
         if (!lastStatusData) return;
         
         const data = lastStatusData;
@@ -222,7 +217,6 @@ function BackupPage() {
         }
     }, [backupCompleted, lastStatusData, t]);
 
-    // ✅ Atjaunina statusu, kad valoda mainās:
     useEffect(() => {
         renderStatusFromData();
     }, [currentLanguage, renderStatusFromData]);
@@ -421,14 +415,12 @@ function BackupPage() {
                 changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
             );
             
-            // ✅ PARĀDA MAINĪTO FAILU SKAITU un IZMĒRU:
             setStatus(
                 `${icon('fails')} ${t('files-count')}: ${changedFiles.length}\n` +
                 `${icon('fails')} ${t('files-size')}: ${sizeText}`
             );
             setLastStatusData({ type: 'files', fileCount: changedFiles.length, fileSizeText: sizeText });
             
-            // ✅ Parāda šo ziņojumu 2 sekundes pirms turpināt:
             await new Promise(resolve => setTimeout(resolve, 2000));
             
             await uploadZip(result.jobId, changedFiles, unchangedFiles, keyHex);
@@ -654,7 +646,9 @@ function BackupPage() {
     if (!config) {
         return (
             <div className="container">
-                <p>Ielādē...</p>
+                <div style={{ textAlign: 'center', padding: '20px' }}>
+                    <div className="spinner"></div>
+                </div>
             </div>
         );
     }
