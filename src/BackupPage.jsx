@@ -25,7 +25,6 @@ function BackupPage() {
     const location = useLocation();
     const { currentLanguage, t, switchLanguage } = useLanguage();
     
-    // ✅ Saņem dati no App.jsx caur location.state
     const stateData = location.state || {};
     const [config, setConfig] = useState(null);
     const [repoName, setRepoName] = useState(searchParams.get('repo'));
@@ -40,7 +39,6 @@ function BackupPage() {
     const [backupCompleted, setBackupCompleted] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
     
-    // ✅ NFT info saņemts no App.jsx
     const [nftInfo, setNftInfo] = useState({
         tokenId: stateData.nftTokenId || null,
         backupCount: stateData.backupCount || null,
@@ -230,7 +228,6 @@ function BackupPage() {
         }
     }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
-    // ✅ Ielādē konfigurāciju un pārbauda GitHub lietotāju
     useEffect(() => {
         const initPage = async () => {
             try {
@@ -249,8 +246,8 @@ function BackupPage() {
                 }
                 setGithubUser(userData.user);
                 
-                // ✅ Ielādē iepriekšējo manifestu, ja ir backup vēsture
-                if (nftInfo.lastManifest && nftInfo.lastManifest.startsWith('ar://')) {
+                // ✅ Izmanto configData (nevis config) un pārbauda, vai arweaveGateway eksistē
+                if (nftInfo.lastManifest && nftInfo.lastManifest.startsWith('ar://') && configData?.arweaveGateway) {
                     const prevManifestId = nftInfo.lastManifest.slice(5);
                     setCurrentPreviousManifestId(prevManifestId);
                     try {
@@ -280,8 +277,13 @@ function BackupPage() {
         initPage();
     }, []);
 
-    // ✅ JAUNĀ FUNKCIJA: Paraksta un sāk backup procesu
     const signAndStartBackup = useCallback(async () => {
+        // ✅ Pārbauda, vai config ir ielādēts
+        if (!config) {
+            setError('Konfigurācija vēl nav ielādēta!');
+            return;
+        }
+        
         if (!window.ethereum || !userAddress) {
             setError(t('connect-wallet'));
             return;
@@ -293,12 +295,10 @@ function BackupPage() {
             setLastStatusData({ type: 'simple', key: 'signing' });
             setError('');
             
-            // ✅ Izveido provider un signer
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signerInstance = await provider.getSigner();
             setSigner(signerInstance);
             
-            // ✅ Izveido Turbo klientu
             const client = TurboFactory.authenticated({
                 signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
                 token: 'base-eth',
@@ -308,14 +308,12 @@ function BackupPage() {
             });
             setTurboClient(client);
             
-            // ✅ Pārbauda, vai NFT pieder šim makam
             const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const nftOwner = await nftContract.ownerOf(BigInt(nftInfo.tokenId));
             if (nftOwner.toLowerCase() !== userAddress.toLowerCase()) {
                 throw new Error('NFT nepieder šim makam!');
             }
             
-            // ✅ Pēc parakstīšanas automātiski sāk backup
             await prepareBackup(client, signerInstance);
             
         } catch (e) {
@@ -331,8 +329,13 @@ function BackupPage() {
         }
     }, [config, userAddress, nftInfo.tokenId, t]);
 
-    // ✅ MODIFICĒTA: prepareBackup tagad saņem turboClient un signer kā parametrus
     const prepareBackup = useCallback(async (client, signerInstance) => {
+        // ✅ Pārbauda, vai config ir ielādēts
+        if (!config) {
+            setError('Konfigurācija nav ielādēta!');
+            return;
+        }
+        
         setStatus(`${icon('upload')} ${t('preparing')}`);
         setLastStatusData({ type: 'simple', key: 'preparing' });
         setError('');
@@ -413,10 +416,15 @@ function BackupPage() {
             }
             setIsSigning(false);
         }
-    }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey]);
+    }, [apiJson, repoName, userAddress, t, formatFileSize, nftInfo.backupCount, currentUnchangedFiles, showMasterKey, promptMasterKey, isValidMasterKey, config]);
 
-    // ✅ MODIFICĒTA: uploadZip saņem client un signerInstance kā parametrus
     const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex, client, signerInstance) => {
+        // ✅ Pārbauda, vai config ir ielādēts
+        if (!config) {
+            setError('Konfigurācija nav ielādēta!');
+            return;
+        }
+        
         setStatus(t('creating-zip'));
         setLastStatusData({ type: 'simple', key: 'creating-zip' });
         
