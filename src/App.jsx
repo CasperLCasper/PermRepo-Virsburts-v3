@@ -129,7 +129,8 @@ function App() {
             
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
             
-            if (parseInt(currentChainId, 16) !== Number(config.chainId)) {
+            // ✅ LABOTS: Number.parseInt vietā parseInt
+            if (Number.parseInt(currentChainId, 16) !== Number(config.chainId)) {
                 try {
                     await window.ethereum.request({ 
                         method: 'wallet_switchEthereumChain', 
@@ -244,7 +245,7 @@ function App() {
         }
     }, [config, githubUser, userAddress, connectWallet]);
 
-    // ✅ JAUNĀ FUNKCIJA: "Izveidot backupu" ar Standarta maka parakstu
+    // ✅ "Izveidot backupu" ar Standarta maka parakstu
     const createBackup = useCallback(async (repo) => {
         if (!window.ethereum || !userAddress) {
             setError(t('connect-wallet'));
@@ -259,13 +260,10 @@ function App() {
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signerInstance = await provider.getSigner();
             
-            // Pieprasa parakstu, lai pierādītu maka kontroli
             const message = `Paraksti, lai turpinātu backupa izveidi repo: ${repo.name}`;
             const signature = await signerInstance.signMessage(message);
             
-            console.log('✅ Standarta paraksts iegūts:', signature);
-            
-            // ✅ Tagad navigē uz BackupPage ar visiem datiem
+            // ✅ Navigē uz BackupPage ar visiem datiem
             navigate(`/backup?repo=${encodeURIComponent(repo.name)}`, {
                 state: {
                     walletAddress: userAddress,
@@ -278,9 +276,6 @@ function App() {
             });
             
         } catch (e) {
-            console.error('=== KĻŪDA ===');
-            console.error('Ziņojums:', e.message);
-            
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
             } else {
