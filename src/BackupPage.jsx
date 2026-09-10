@@ -15,12 +15,12 @@ const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external"
 ];
 
-// ✅ React komponente ikonai — DROŠI!
+// ✅ React komponente ikonai — DROŠI, bez dangerouslySetInnerHTML
 function Icon({ name }) {
     return <img src={`/icons/${name}.svg`} className="icon-inline" alt="" aria-hidden="true" />;
 }
 
-// ✅ URL validācija — novērš SonarCloud brīdinājumu
+// ✅ Baltā saraksta gateway (SonarCloud prasība)
 const ALLOWED_GATEWAY_HOSTS = [
     'arweave.net',
     'ar-io.dev',
@@ -28,24 +28,36 @@ const ALLOWED_GATEWAY_HOSTS = [
     'gateway.arweave.net'
 ];
 
+// ✅ Atļautās shēmas
+const ALLOWED_SCHEMES = ['https:', 'http:'];
+
+// ✅ Manifesta ID validācija
 function isValidManifestId(id) {
     return typeof id === 'string' && /^[a-zA-Z0-9_-]{43}$/.test(id);
 }
 
-function buildManifestUrl(gatewayUrl, manifestId) {
+// ✅ Droša URL validācija — baltā saraksta princips (SonarCloud atbilstība)
+function getValidatedManifestUrl(gatewayUrl, manifestId) {
     if (!isValidManifestId(manifestId)) {
         throw new Error('Nederīgs manifesta ID');
     }
     
+    let parsedUrl;
     try {
-        const url = new URL(gatewayUrl);
-        if (!ALLOWED_GATEWAY_HOSTS.some(host => url.hostname.endsWith(host))) {
-            throw new Error('Nederīgs gateway');
-        }
-        return `${url.origin}/raw/${encodeURIComponent(manifestId)}`;
+        parsedUrl = new URL(gatewayUrl);
     } catch (e) {
         throw new Error('Nederīgs gateway URL');
     }
+    
+    if (!ALLOWED_SCHEMES.includes(parsedUrl.protocol)) {
+        throw new Error('Nederīga shēma');
+    }
+    
+    if (!ALLOWED_GATEWAY_HOSTS.includes(parsedUrl.hostname)) {
+        throw new Error('Nederīgs gateway hosts');
+    }
+    
+    return `${parsedUrl.origin}/raw/${encodeURIComponent(manifestId)}`;
 }
 
 // ✅ Droša kļūdas ziņojuma iegūšana — neielogo lietotāja datus
@@ -246,10 +258,10 @@ function BackupPage() {
         
         switch(data.type) {
             case 'uploading':
-                setStatus(`${t('uploading')}`);
+                setStatus(t('uploading'));
                 break;
             case 'success':
-                setStatus(`${t(data.key)}`);
+                setStatus(t(data.key));
                 break;
             case 'simple':
                 setStatus(t(data.key));
@@ -289,33 +301,31 @@ function BackupPage() {
                 let previousHistory = [];
                 let previousEncryptionIVs = {};
                 
-                if (nftInfo.lastManifest && nftInfo.lastManifest.startsWith('ar://') && configData?.arweaveGateway) {
+                if (nftInfo.lastManifest && nftInfo.lastManifest.startsWith('ar://')) {
                     const prevManifestId = nftInfo.lastManifest.slice(5);
                     setCurrentPreviousManifestId(prevManifestId);
                     
-                    // ✅ Droši veido URL ar validāciju
-                    if (isValidManifestId(prevManifestId)) {
-                        try {
-                            const manifestUrl = buildManifestUrl(configData.arweaveGateway, prevManifestId);
-                            const manifestResponse = await fetch(manifestUrl);
-                            if (manifestResponse.ok) {
-                                const prevManifest = await manifestResponse.json();
-                                if (prevManifest && typeof prevManifest.paths === 'object') {
-                                    previousPaths = prevManifest.paths;
-                                    setCurrentUnchangedFiles(prevManifest.paths);
-                                }
-                                if (Array.isArray(prevManifest?.history)) {
-                                    previousHistory = prevManifest.history;
-                                    setCurrentPreviousHistory(prevManifest.history);
-                                }
-                                if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
-                                    previousEncryptionIVs = prevManifest.encryption.ivs;
-                                    setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
-                                }
+                    // ✅ Izmanto VALIDĒTO funkciju — baltā saraksta princips
+                    try {
+                        const manifestUrl = getValidatedManifestUrl(configData.arweaveGateway, prevManifestId);
+                        const manifestResponse = await fetch(manifestUrl);
+                        if (manifestResponse.ok) {
+                            const prevManifest = await manifestResponse.json();
+                            if (prevManifest && typeof prevManifest.paths === 'object') {
+                                previousPaths = prevManifest.paths;
+                                setCurrentUnchangedFiles(prevManifest.paths);
                             }
-                        } catch (manifestError) {
-                            console.warn('⚠️ Manifesta ielāde neizdevās');
+                            if (Array.isArray(prevManifest?.history)) {
+                                previousHistory = prevManifest.history;
+                                setCurrentPreviousHistory(prevManifest.history);
+                            }
+                            if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
+                                previousEncryptionIVs = prevManifest.encryption.ivs;
+                                setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
+                            }
                         }
+                    } catch (manifestError) {
+                        console.warn('⚠️ Manifesta ielāde neizdevās');
                     }
                 }
                 
@@ -370,7 +380,7 @@ function BackupPage() {
         }
         
         if (changedFilesForUpload.length === 0) {
-            setStatus(`${t('no-changes')}`);
+            setStatus(t('no-changes'));
             setLastStatusData({ type: 'simple', key: 'no-changes' });
             return;
         }
@@ -755,7 +765,11 @@ function BackupPage() {
                         <div style={{ marginTop: '12px' }}>
                             <Icon name="manifests" />
                             {' '}{t('manifest-link')}:{' '}
-                            <a href={`${config.arweaveGateway}/raw/${lastManifestTxId}`} target="_blank" rel="noopener noreferrer">
+                            <a 
+                                href={`https://arweave.net/raw/${encodeURIComponent(lastManifestTxId)}`} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                            >
                                 ar://{lastManifestTxId}
                             </a>
                         </div>
