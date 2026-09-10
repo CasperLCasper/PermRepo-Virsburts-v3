@@ -15,8 +15,47 @@ const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external"
 ];
 
-function icon(name) {
-    return `<img src="/icons/${name}.svg" class="icon-inline" alt="" aria-hidden="true">`;
+// ✅ React komponente ikonai — DROŠI!
+function Icon({ name }) {
+    return <img src={`/icons/${name}.svg`} className="icon-inline" alt="" aria-hidden="true" />;
+}
+
+// ✅ URL validācija — novērš SonarCloud brīdinājumu
+const ALLOWED_GATEWAY_HOSTS = [
+    'arweave.net',
+    'ar-io.dev',
+    'turbo-gateway.com',
+    'gateway.arweave.net'
+];
+
+function isValidManifestId(id) {
+    return typeof id === 'string' && /^[a-zA-Z0-9_-]{43}$/.test(id);
+}
+
+function buildManifestUrl(gatewayUrl, manifestId) {
+    if (!isValidManifestId(manifestId)) {
+        throw new Error('Nederīgs manifesta ID');
+    }
+    
+    try {
+        const url = new URL(gatewayUrl);
+        if (!ALLOWED_GATEWAY_HOSTS.some(host => url.hostname.endsWith(host))) {
+            throw new Error('Nederīgs gateway');
+        }
+        return `${url.origin}/raw/${encodeURIComponent(manifestId)}`;
+    } catch (e) {
+        throw new Error('Nederīgs gateway URL');
+    }
+}
+
+// ✅ Droša kļūdas ziņojuma iegūšana — neielogo lietotāja datus
+function getSafeErrorMessage(error) {
+    if (!error) return 'Nezināma kļūda';
+    if (typeof error === 'string') return error.substring(0, 200);
+    if (error.message && typeof error.message === 'string') {
+        return error.message.substring(0, 200);
+    }
+    return 'Nezināma kļūda';
 }
 
 function BackupPage() {
@@ -207,10 +246,10 @@ function BackupPage() {
         
         switch(data.type) {
             case 'uploading':
-                setStatus(`${icon('upload')} ${t('uploading')}`);
+                setStatus(`${t('uploading')}`);
                 break;
             case 'success':
-                setStatus(`${icon('izdevas-veiksmigi')} ${t(data.key)}`);
+                setStatus(`${t(data.key)}`);
                 break;
             case 'simple':
                 setStatus(t(data.key));
@@ -230,8 +269,6 @@ function BackupPage() {
     useEffect(() => {
         const initPage = async () => {
             try {
-                console.log('🔵 DEBUG: Sāk initPage...');
-                
                 const configData = await apiJson('/api/config');
                 setConfig(configData);
                 
@@ -256,25 +293,29 @@ function BackupPage() {
                     const prevManifestId = nftInfo.lastManifest.slice(5);
                     setCurrentPreviousManifestId(prevManifestId);
                     
-                    try {
-                        const manifestResponse = await fetch(`${configData.arweaveGateway}/raw/${encodeURIComponent(prevManifestId)}`);
-                        if (manifestResponse.ok) {
-                            const prevManifest = await manifestResponse.json();
-                            if (prevManifest && typeof prevManifest.paths === 'object') {
-                                previousPaths = prevManifest.paths;
-                                setCurrentUnchangedFiles(prevManifest.paths);
+                    // ✅ Droši veido URL ar validāciju
+                    if (isValidManifestId(prevManifestId)) {
+                        try {
+                            const manifestUrl = buildManifestUrl(configData.arweaveGateway, prevManifestId);
+                            const manifestResponse = await fetch(manifestUrl);
+                            if (manifestResponse.ok) {
+                                const prevManifest = await manifestResponse.json();
+                                if (prevManifest && typeof prevManifest.paths === 'object') {
+                                    previousPaths = prevManifest.paths;
+                                    setCurrentUnchangedFiles(prevManifest.paths);
+                                }
+                                if (Array.isArray(prevManifest?.history)) {
+                                    previousHistory = prevManifest.history;
+                                    setCurrentPreviousHistory(prevManifest.history);
+                                }
+                                if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
+                                    previousEncryptionIVs = prevManifest.encryption.ivs;
+                                    setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
+                                }
                             }
-                            if (Array.isArray(prevManifest?.history)) {
-                                previousHistory = prevManifest.history;
-                                setCurrentPreviousHistory(prevManifest.history);
-                            }
-                            if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
-                                previousEncryptionIVs = prevManifest.encryption.ivs;
-                                setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
-                            }
+                        } catch (manifestError) {
+                            console.warn('⚠️ Manifesta ielāde neizdevās');
                         }
-                    } catch (manifestError) {
-                        console.warn('⚠️ DEBUG: Manifesta ielāde neizdevās:', manifestError.message);
                     }
                 }
                 
@@ -299,8 +340,6 @@ function BackupPage() {
                     }
                 }
                 
-                console.log('✅ DEBUG: Mainītie:', changedFiles.length, 'Nemainītie:', Object.keys(unchangedFiles).length);
-                
                 const sizeText = formatFileSize(
                     changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
                 );
@@ -311,8 +350,7 @@ function BackupPage() {
                 setPreparedJobId(result.jobId);
                 
             } catch (e) {
-                console.error('🔴 DEBUG: initPage kļūda:', e.message);
-                setError(e.message);
+                setError(getSafeErrorMessage(e));
                 setFileInfo({ count: 0, sizeText: '', loading: false });
             }
         };
@@ -332,7 +370,7 @@ function BackupPage() {
         }
         
         if (changedFilesForUpload.length === 0) {
-            setStatus(`${icon('izdevas-veiksmigi')} ${t('no-changes')}`);
+            setStatus(`${t('no-changes')}`);
             setLastStatusData({ type: 'simple', key: 'no-changes' });
             return;
         }
@@ -341,11 +379,9 @@ function BackupPage() {
             setIsWorking(true);
             setError('');
             
-            console.log('🔵 DEBUG: 1. Pārbauda tīklu...');
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
             
             if (parseInt(currentChainId, 16) !== Number(config.chainId)) {
-                console.log('🔵 DEBUG: 2. Maina tīklu...');
                 try {
                     await window.ethereum.request({ 
                         method: 'wallet_switchEthereumChain', 
@@ -370,12 +406,10 @@ function BackupPage() {
                 }
             }
             
-            console.log('🔵 DEBUG: 3. Veido signer...');
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signerInstance = await provider.getSigner();
             setSigner(signerInstance);
             
-            console.log('🔵 DEBUG: 4. Veido Turbo klientu...');
             const client = TurboFactory.authenticated({
                 signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
                 token: 'base-eth',
@@ -385,7 +419,6 @@ function BackupPage() {
             });
             setTurboClient(client);
             
-            console.log('🔵 DEBUG: 5. Master Key...');
             const backupCount = Number(nftInfo.backupCount || 0);
             let keyHex;
             
@@ -402,16 +435,13 @@ function BackupPage() {
                 }
             }
             
-            console.log('🔵 DEBUG: 6. Sāk augšupielādi...');
             await uploadZip(preparedJobId, changedFilesForUpload, unchangedFilesForUpload, keyHex, client, signerInstance);
             
         } catch (e) {
-            console.error('🔴 DEBUG: continueBackup kļūda:', e.message);
-            
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
             } else {
-                setError(e.message);
+                setError(getSafeErrorMessage(e));
             }
             setIsWorking(false);
         }
@@ -454,12 +484,11 @@ function BackupPage() {
             setCurrentIV(iv);
             setCurrentMerkleRoot(merkleRoot);
             
-            setStatus(`${icon('upload')} ${t('uploading')}`);
+            setStatus(t('uploading'));
             setLastStatusData({ type: 'uploading' });
             
             const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
             
-            console.log('🔵 DEBUG: ZIP augšupielāde (PARAKSTS #2)...');
             const zipResult = await client.uploadFile({
                 fileStreamFactory: () => zipBlob.stream(),
                 fileSizeFactory: () => zipBlob.size,
@@ -479,7 +508,6 @@ function BackupPage() {
             });
             
             const zipTxId = zipResult.id;
-            console.log('✅ DEBUG: ZIP augšupielādēts:', zipTxId);
             
             await apiJson('/api/save-zip-tx', {
                 method: 'POST',
@@ -497,7 +525,7 @@ function BackupPage() {
                     history.push({
                         backupNumber: currentPreviousBackupNumber || history.length,
                         manifestId: currentPreviousManifestId,
-                        url: `${config.arweaveGateway}/raw/${encodeURIComponent(currentPreviousManifestId)}`
+                        url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
                     });
                 }
             }
@@ -514,7 +542,7 @@ function BackupPage() {
                 encryption: { ivs: encryptionIVs },
                 archive: {
                     id: zipTxId,
-                    url: `${config.arweaveGateway}/raw/${encodeURIComponent(zipTxId)}`,
+                    url: `/raw/${encodeURIComponent(zipTxId)}`,
                     contains: changedFiles.map(file => ({ path: file.path, hash: file.hash }))
                 },
                 paths: {},
@@ -536,7 +564,6 @@ function BackupPage() {
             
             const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
             
-            console.log('🔵 DEBUG: Manifesta augšupielāde (PARAKSTS #3)...');
             const manifestResult = await client.uploadFile({
                 fileStreamFactory: () => manifestBlob.stream(),
                 fileSizeFactory: () => manifestBlob.size,
@@ -555,7 +582,6 @@ function BackupPage() {
             });
             
             const manifestTxId = manifestResult.id;
-            console.log('✅ DEBUG: Manifests augšupielādēts:', manifestTxId);
             
             await apiJson('/api/save-manifest-tx', {
                 method: 'POST',
@@ -563,7 +589,6 @@ function BackupPage() {
                 body: JSON.stringify({ jobId, manifestTxId, manifest })
             });
             
-            console.log('🔵 DEBUG: EIP-712 paraksts (PARAKSTS #4)...');
             setStatus(t('signing'));
             setLastStatusData({ type: 'simple', key: 'signing' });
             
@@ -596,9 +621,7 @@ function BackupPage() {
             };
             
             const signature = await signerInstance.signTypedData(domain, types, value);
-            console.log('✅ DEBUG: EIP-712 paraksts iegūts');
             
-            console.log('🔵 DEBUG: NFT transakcija (PARAKSTS #5)...');
             const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, signerInstance);
             const tx = await nftWrite.addBackup(
                 BigInt(nftInfo.tokenId),
@@ -613,8 +636,6 @@ function BackupPage() {
                 await tx.wait();
             }
             
-            console.log('✅ DEBUG: NFT transakcija apstiprināta!');
-            
             const newBackupCount = onChainBackupCount + 1n;
             setNftInfo({
                 tokenId: nftInfo.tokenId,
@@ -626,16 +647,14 @@ function BackupPage() {
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             
-            setStatus(`${icon('izdevas-veiksmigi')} ${t('backup-complete')}`);
+            setStatus(t('backup-complete'));
             setLastStatusData({ type: 'success', key: 'backup-complete' });
             
         } catch (e) {
-            console.error('🔴 DEBUG: uploadZip kļūda:', e.message);
-            
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
             } else {
-                setError(e.message);
+                setError(getSafeErrorMessage(e));
             }
         } finally {
             setIsWorking(false);
@@ -683,7 +702,7 @@ function BackupPage() {
                 <span className="info-value">{nftInfo.lastMerkleRoot || '-'}</span>
             </div>
             
-            {/* ✅ FAILU INFO RINDIŅĀ AR SPINERI */}
+            {/* ✅ FAILU INFO RINDIŅĀ AR IKONU KOMPONENTI */}
             {fileInfo.loading ? (
                 <div style={{ textAlign: 'center', padding: '20px' }}>
                     <div className="spinner"></div>
@@ -691,11 +710,11 @@ function BackupPage() {
             ) : (
                 <>
                     <div style={{ padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                        <span dangerouslySetInnerHTML={{ __html: icon('fails') }} />
+                        <Icon name="fails" />
                         {' '}{t('files-count')}: <strong>{fileInfo.count}</strong>
                     </div>
                     <div style={{ padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                        <span dangerouslySetInnerHTML={{ __html: icon('fails') }} />
+                        <Icon name="fails" />
                         {' '}{t('files-size')}: <strong>{fileInfo.sizeText}</strong>
                     </div>
                 </>
@@ -728,11 +747,14 @@ function BackupPage() {
             
             {status && (
                 <div className="status-card" style={{ display: 'block' }}>
-                    <div style={{ whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: status }} />
+                    <div style={{ whiteSpace: 'pre-wrap' }}>
+                        <Icon name={lastStatusData?.type === 'success' ? 'izdevas-veiksmigi' : 'upload'} />
+                        {' '}{status}
+                    </div>
                     {backupCompleted && lastManifestTxId && (
                         <div style={{ marginTop: '12px' }}>
-                            <span dangerouslySetInnerHTML={{ __html: icon('manifests') }} />
-                            {t('manifest-link')}:{' '}
+                            <Icon name="manifests" />
+                            {' '}{t('manifest-link')}:{' '}
                             <a href={`${config.arweaveGateway}/raw/${lastManifestTxId}`} target="_blank" rel="noopener noreferrer">
                                 ar://{lastManifestTxId}
                             </a>
@@ -742,7 +764,10 @@ function BackupPage() {
             )}
             
             {error && (
-                <div className="error" dangerouslySetInnerHTML={{ __html: `${icon('kluda')} ${error}` }} />
+                <div className="error">
+                    <Icon name="kluda" />
+                    {' '}{error}
+                </div>
             )}
         </div>
     );
