@@ -24,8 +24,19 @@ const USDC_ABI = [
     "function approve(address spender, uint256 amount) external returns (bool)"
 ];
 
-function icon(name) {
-    return `<img src="/icons/${name}.svg" class="icon-inline" alt="" aria-hidden="true">`;
+// ✅ React komponente ikonai — DROŠI!
+function Icon({ name }) {
+    return <img src={`/icons/${name}.svg`} className="icon-inline" alt="" aria-hidden="true" />;
+}
+
+// ✅ React komponente statusam ar ikonu
+function StatusMessage({ iconName, children, color }) {
+    return (
+        <div className="status" style={{ marginTop: '20px', textAlign: 'center', color: color || '#e6edf3' }}>
+            <Icon name={iconName} />
+            {children}
+        </div>
+    );
 }
 
 function App() {
@@ -87,7 +98,7 @@ function App() {
             const subscribeTx = await subscriptionContract.connect(providerSigner).subscribe(githubHash);
             await subscribeTx.wait();
             
-            setStatus(`${icon('izdevas-veiksmigi')} Abonements iegādāts!`);
+            setStatus('Abonements iegādāts!');
             setStatusType('success');
             setLastStatusData({ type: 'subscription-purchased' });
             await checkSubscription();
@@ -191,7 +202,7 @@ function App() {
             setReposData(reposWithStatus);
             setWalletConnected(true);
             
-            setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${address}`);
+            setStatus(`${t('wallet-connected')}: ${address}`);
             setStatusType('success');
             setLastStatusData({ type: 'wallet-connected', address: address });
             setIsLoading(false);
@@ -218,7 +229,7 @@ function App() {
             const tx = await nftWrite.mintRepository(userAddress, fullRepoName, nftImageURI);
             await tx.wait();
             
-            setStatus(`${icon('izdevas-veiksmigi')} NFT izveidots!`);
+            setStatus('NFT izveidots!');
             setStatusType('success');
             setLastStatusData({ type: 'nft-minted' });
             await connectWallet();
@@ -281,7 +292,7 @@ function App() {
 
     useEffect(() => {
         if (lastStatusData && lastStatusData.type === 'wallet-connected' && walletConnected) {
-            setStatus(`${icon('izdevas-veiksmigi')} ${t('wallet-connected')}: ${lastStatusData.address}`);
+            setStatus(`${t('wallet-connected')}: ${lastStatusData.address}`);
             setStatusType('success');
         }
     }, [currentLanguage, lastStatusData, walletConnected, t]);
@@ -442,7 +453,7 @@ function App() {
                     {selectedRepo && (
                         <div style={{ display: 'block', marginTop: '16px' }}>
                             <div className={`repo-status-display ${selectedRepo.hasNFT ? 'has-nft' : 'no-nft'}`}>
-                                <span dangerouslySetInnerHTML={{ __html: icon(selectedRepo.hasNFT ? 'ir-nft' : 'nav-nft') }} />
+                                <Icon name={selectedRepo.hasNFT ? 'ir-nft' : 'nav-nft'} />
                                 {selectedRepo.hasNFT ? t('nft-linked') : t('no-nft')}
                             </div>
                             
@@ -471,12 +482,15 @@ function App() {
             )}
             
             {status && (
-                <div className="status" style={{ marginTop: '20px', textAlign: 'center', color: statusType === 'success' ? '#3fb950' : '#e6edf3' }} dangerouslySetInnerHTML={{ __html: status }} />
+                <div className="status" style={{ marginTop: '20px', textAlign: 'center', color: statusType === 'success' ? '#3fb950' : '#e6edf3' }}>
+                    <Icon name={statusType === 'success' ? 'izdevas-veiksmigi' : 'upload'} />
+                    {status}
+                </div>
             )}
             
             {error && (
                 <div className="error">
-                    <span dangerouslySetInnerHTML={{ __html: icon('kluda') }} />
+                    <Icon name="kluda" />
                     {error}
                 </div>
             )}
