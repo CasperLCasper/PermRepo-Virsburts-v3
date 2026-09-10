@@ -179,8 +179,9 @@ class GitHubRateLimiter {
         const remaining = response.headers.get('x-ratelimit-remaining');
         const reset = response.headers.get('x-ratelimit-reset');
         
-        if (remaining) this.remaining = parseInt(remaining);
-        if (reset) this.resetTime = parseInt(reset) * 1000;
+        // ✅ LABOTS: Number.parseInt vietā parseInt
+        if (remaining) this.remaining = Number.parseInt(remaining, 10);
+        if (reset) this.resetTime = Number.parseInt(reset, 10) * 1000;
         
         return response;
     }
@@ -341,7 +342,8 @@ async function downloadSingleFile(githubToken, file) {
     });
     
     const contentLength = fileResponse.headers.get('content-length');
-    if (contentLength && parseInt(contentLength) > MAX_FILE_BYTES) {
+    // ✅ LABOTS: Number.parseInt vietā parseInt
+    if (contentLength && Number.parseInt(contentLength, 10) > MAX_FILE_BYTES) {
         throw new Error(`Fails ${file.path} pārsniedz izmēra limitu.`);
     }
     
