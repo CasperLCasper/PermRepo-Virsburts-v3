@@ -151,6 +151,8 @@ function App() {
                                 }
                             }]
                         });
+                    } else {
+                        throw switchError;
                     }
                 }
             }
@@ -180,20 +182,23 @@ function App() {
                 
                 if (tokenId !== 0n) {
                     try {
+                        const owner = await nftContract.ownerOf(tokenId);
+                        const isOwnedByConnectedWallet = owner.toLowerCase() === address.toLowerCase();
                         const backupCount = await nftContract.getBackupCount(tokenId);
                         const lastManifest = await nftContract.getManifestURI(tokenId);
                         const lastMerkleRoot = await nftContract.getLastMerkleRoot(tokenId);
-                        
-                        reposWithStatus.push({ 
-                            ...repo, 
+
+                        reposWithStatus.push({
+                            ...repo,
                             hasNFT: true,
+                            nftOwnedByWallet: isOwnedByConnectedWallet,
                             tokenId: tokenId.toString(),
                             backupCount: backupCount.toString(),
-                            lastManifest: lastManifest || 'Nav',
-                            lastMerkleRoot: lastMerkleRoot || 'Nav'
+                            lastManifest: lastManifest || null,
+                            lastMerkleRoot: lastMerkleRoot || null
                         });
                     } catch (nftError) {
-                        reposWithStatus.push({ ...repo, hasNFT: true, tokenId: tokenId.toString() });
+                        reposWithStatus.push({ ...repo, hasNFT: true, nftOwnedByWallet: false, tokenId: tokenId.toString() });
                     }
                 } else {
                     reposWithStatus.push({ ...repo, hasNFT: false });
@@ -215,6 +220,10 @@ function App() {
     }, [config, apiJson, githubUser, t]);
 
     const mintNFT = useCallback(async (repoName) => {
+        if (!subscriptionStatus?.isSubscribed) {
+            setError(t('subscription-required'));
+            return;
+        }
         try {
             setIsLoading(true);
             setStatus('Izveido NFT...');
@@ -243,47 +252,54 @@ function App() {
                 setError(e.message);
             }
         }
-    }, [config, githubUser, userAddress, connectWallet]);
+    }, [config, githubUser, userAddress, connectWallet, subscriptionStatus, t]);
 
-    // ✅ "Izveidot backupu" ar Standarta maka parakstu
     const createBackup = useCallback(async (repo) => {
         if (!window.ethereum || !userAddress) {
             setError(t('connect-wallet'));
             return;
         }
-        
+
+        if (!subscriptionStatus?.isSubscribed) {
+            setError(t('subscription-required'));
+            return;
+        }
+
         try {
             setIsSigningForBackup(true);
             setError('');
-            
-            // ✅ STANDARTA MAKA PARAKSTS (1. paraksts)
+
             const provider = new ethers.BrowserProvider(window.ethereum);
-            const signerInstance = await provider.getSigner();
-            
-            const message = `Paraksti, lai turpinātu backupa izveidi repo: ${repo.name}`;
-            const signature = await signerInstance.signMessage(message);
-            
-            // ✅ Navigē uz BackupPage ar visiem datiem
+            const accounts = await provider.send('eth_accounts', []);
+            const currentAddress = accounts[0] ? ethers.getAddress(accounts[0]) : null;
+            if (!currentAddress || currentAddress.toLowerCase() !== userAddress.toLowerCase()) {
+                throw new Error(t('wallet-changed'));
+            }
+
+            const nftContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
+            const owner = await nftContract.ownerOf(BigInt(repo.tokenId));
+            if (owner.toLowerCase() !== currentAddress.toLowerCase()) {
+                throw new Error(t('nft-not-owned'));
+            }
+
             navigate(`/backup?repo=${encodeURIComponent(repo.name)}`, {
                 state: {
-                    walletAddress: userAddress,
+                    walletAddress: currentAddress,
                     nftTokenId: repo.tokenId,
                     backupCount: repo.backupCount,
                     lastManifest: repo.lastManifest,
-                    lastMerkleRoot: repo.lastMerkleRoot,
-                    standardSignature: signature
+                    lastMerkleRoot: repo.lastMerkleRoot
                 }
             });
-            
         } catch (e) {
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
             } else {
-                setError(e.message);
+                setError(e.message || t('unknown-error'));
             }
             setIsSigningForBackup(false);
         }
-    }, [userAddress, navigate, t]);
+    }, [config, userAddress, navigate, t, subscriptionStatus]);
 
     useEffect(() => {
         if (lastStatusData && lastStatusData.type === 'wallet-connected' && walletConnected) {
@@ -291,6 +307,34 @@ function App() {
             setStatusType('success');
         }
     }, [currentLanguage, lastStatusData, walletConnected, t]);
+
+    useEffect(() => {
+        if (!window.ethereum) return undefined;
+
+        const handleAccountsChanged = () => {
+            setWalletConnected(false);
+            setUserAddress(null);
+            setSigner(null);
+            setReposData([]);
+            setSelectedRepoName(null);
+            setError(t('wallet-changed'));
+        };
+
+        const handleChainChanged = () => {
+            setWalletConnected(false);
+            setReposData([]);
+            setSelectedRepoName(null);
+            setError(t('network-changed'));
+        };
+
+        window.ethereum.on?.('accountsChanged', handleAccountsChanged);
+        window.ethereum.on?.('chainChanged', handleChainChanged);
+
+        return () => {
+            window.ethereum.removeListener?.('accountsChanged', handleAccountsChanged);
+            window.ethereum.removeListener?.('chainChanged', handleChainChanged);
+        };
+    }, [t]);
 
     useEffect(() => {
         const initApp = async () => {
@@ -390,7 +434,7 @@ function App() {
                     </div>
                     <button 
                         onClick={async () => {
-                            await fetch('/api/github/logout');
+                            await fetch('/api/github/logout', { method: 'POST', credentials: 'same-origin' });
                             window.location.href = '/?logout=' + Date.now();
                         }}
                         className="logout-button"
@@ -449,27 +493,37 @@ function App() {
                         <div style={{ display: 'block', marginTop: '16px' }}>
                             <div className={`repo-status-display ${selectedRepo.hasNFT ? 'has-nft' : 'no-nft'}`}>
                                 <Icon name={selectedRepo.hasNFT ? 'ir-nft' : 'nav-nft'} />
-                                {selectedRepo.hasNFT ? t('nft-linked') : t('no-nft')}
+                                {selectedRepo.hasNFT ? (selectedRepo.nftOwnedByWallet ? t('nft-linked') : t('nft-not-owned')) : t('no-nft')}
                             </div>
                             
                             {isSigningForBackup ? (
                                 <div style={{ textAlign: 'center', padding: '20px' }}>
                                     <div className="spinner"></div>
                                 </div>
-                            ) : selectedRepo.hasNFT ? (
+                            ) : selectedRepo.hasNFT && selectedRepo.nftOwnedByWallet && subscriptionStatus?.isSubscribed ? (
                                 <button 
                                     onClick={() => createBackup(selectedRepo)}
                                     className="sign-button"
                                 >
                                     {t('open-backup')}
                                 </button>
-                            ) : (
+                            ) : selectedRepo.hasNFT ? (
+                                <div className="error">
+                                    <Icon name="kluda" />
+                                    {t('nft-not-owned')}
+                                </div>
+                            ) : subscriptionStatus?.isSubscribed ? (
                                 <button 
                                     onClick={() => mintNFT(selectedRepo.name)}
                                     className="sign-button"
                                 >
                                     {t('mint-nft')}
                                 </button>
+                            ) : (
+                                <div className="error">
+                                    <Icon name="kluda" />
+                                    {t('subscription-required')}
+                                </div>
                             )}
                         </div>
                     )}
