@@ -391,7 +391,8 @@ function BackupPage() {
             
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
             
-            if (parseInt(currentChainId, 16) !== Number(config.chainId)) {
+            // ✅ LABOTS: Number.parseInt vietā parseInt
+            if (Number.parseInt(currentChainId, 16) !== Number(config.chainId)) {
                 try {
                     await window.ethereum.request({ 
                         method: 'wallet_switchEthereumChain', 
@@ -472,7 +473,8 @@ function BackupPage() {
                 const binaryString = atob(file.content);
                 const fileBuffer = new Uint8Array(binaryString.length);
                 for (let j = 0; j < binaryString.length; j++) {
-                    fileBuffer[j] = binaryString.charCodeAt(j) & 0xFF;
+                    // ✅ LABOTS: codePointAt vietā charCodeAt
+                    fileBuffer[j] = binaryString.codePointAt(j) & 0xFF;
                 }
                 zip.file(file.path, fileBuffer);
             }
