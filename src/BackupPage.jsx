@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
 import JSZip from 'jszip';
-import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useLanguage } from './LanguageContext';
 import { TurboFactory } from '@ardrive/turbo-sdk/web';
 import { InjectedEthereumSigner } from '@dha-team/arbundles';
@@ -29,7 +29,7 @@ const ALLOWED_GATEWAY_HOSTS = [
 ];
 
 // ✅ Atļautās shēmas
-const ALLOWED_SCHEMES = ['https:', 'http:'];
+const ALLOWED_SCHEMES = ['https:'];
 
 // ✅ Manifesta ID validācija
 function isValidManifestId(id) {
@@ -73,16 +73,12 @@ function getSafeErrorMessage(error) {
 function BackupPage() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
-    const location = useLocation();
     const { currentLanguage, t, switchLanguage } = useLanguage();
     
-    const stateData = location.state || {};
     const [config, setConfig] = useState(null);
-    const [repoName, setRepoName] = useState(searchParams.get('repo'));
+    const repoName = searchParams.get('repo');
     const [githubUser, setGithubUser] = useState(null);
-    const [userAddress, setUserAddress] = useState(stateData.walletAddress || null);
-    const [signer, setSigner] = useState(null);
-    const [turboClient, setTurboClient] = useState(null);
+    const [userAddress, setUserAddress] = useState(null);
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
@@ -90,10 +86,10 @@ function BackupPage() {
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
     
     const [nftInfo, setNftInfo] = useState({
-        tokenId: stateData.nftTokenId || null,
-        backupCount: stateData.backupCount || null,
-        lastManifest: stateData.lastManifest || null,
-        lastMerkleRoot: stateData.lastMerkleRoot || null
+        tokenId: null,
+        backupCount: null,
+        lastManifest: null,
+        lastMerkleRoot: null
     });
     
     const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState({});
@@ -110,6 +106,12 @@ function BackupPage() {
     const [changedFilesForUpload, setChangedFilesForUpload] = useState([]);
     const [unchangedFilesForUpload, setUnchangedFilesForUpload] = useState({});
     const [preparedJobId, setPreparedJobId] = useState(null);
+
+    // Saglabājam pašreizējā mēģinājuma progresu tikai atmiņā, lai kļūmes gadījumā
+    // neradītu jaunu ZIP ar citu IV/MK un varētu turpināt jau augšupielādēto darbu.
+    const masterKeyRef = useRef(null);
+    const uploadedZipRef = useRef({ txId: null, iv: null, merkleRoot: null });
+    const uploadedManifestRef = useRef({ txId: null, manifest: null });
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -247,7 +249,7 @@ function BackupPage() {
                 URL.revokeObjectURL(url);
             };
             
-            closeButton.onclick = () => { modal.remove(); resolve(); };
+            closeButton.onclick = () => { modal.remove(); resolve(true); };
         });
     }, [t, repoName]);
 
@@ -277,96 +279,148 @@ function BackupPage() {
         }
     }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
-    // ✅ LABOTS: Pareiza secība — manifests vispirms, tad faili
     useEffect(() => {
+        let cancelled = false;
+
         const initPage = async () => {
             try {
                 const configData = await apiJson('/api/config');
+                if (cancelled) return;
                 setConfig(configData);
-                
-                if (!repoName) {
-                    setError('Nav repo nosaukuma URL parametrā!');
+
+                if (!repoName || !/^[a-zA-Z0-9_.-]{1,100}$/.test(repoName)) {
+                    setError(t('invalid-repo'));
+                    setFileInfo({ count: 0, sizeText: '', loading: false });
                     return;
                 }
-                
+
                 const userData = await apiJson('/api/github/user');
                 if (!userData.success) {
                     window.location.href = '/api/github/login';
                     return;
                 }
                 setGithubUser(userData.user);
-                
-                // ✅ 1. Ielādē iepriekšējo manifestu
-                let previousPaths = {};
-                let previousHistory = [];
-                let previousEncryptionIVs = {};
-                
-                if (nftInfo.lastManifest && nftInfo.lastManifest.startsWith('ar://')) {
-                    const prevManifestId = nftInfo.lastManifest.slice(5);
-                    setCurrentPreviousManifestId(prevManifestId);
-                    
-                    // ✅ Izmanto VALIDĒTO funkciju — baltā saraksta princips
+
+                if (!window.ethereum) {
+                    setError(t('connect-wallet'));
+                    setFileInfo({ count: 0, sizeText: '', loading: false });
+                    return;
+                }
+
+                const provider = new ethers.BrowserProvider(window.ethereum);
+                const accounts = await provider.send('eth_accounts', []);
+                if (!accounts[0]) {
+                    setError(t('connect-wallet'));
+                    setFileInfo({ count: 0, sizeText: '', loading: false });
+                    return;
+                }
+
+                const currentAddress = ethers.getAddress(accounts[0]);
+                setUserAddress(currentAddress);
+
+                const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+                if (Number.parseInt(currentChainId, 16) !== Number(configData.chainId)) {
                     try {
-                        const manifestUrl = getValidatedManifestUrl(configData.arweaveGateway, prevManifestId);
-                        const manifestResponse = await fetch(manifestUrl);
-                        if (manifestResponse.ok) {
-                            const prevManifest = await manifestResponse.json();
-                            if (prevManifest && typeof prevManifest.paths === 'object') {
-                                previousPaths = prevManifest.paths;
-                                setCurrentUnchangedFiles(prevManifest.paths);
-                            }
-                            if (Array.isArray(prevManifest?.history)) {
-                                previousHistory = prevManifest.history;
-                                setCurrentPreviousHistory(prevManifest.history);
-                            }
-                            if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object') {
-                                previousEncryptionIVs = prevManifest.encryption.ivs;
-                                setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
-                            }
+                        await window.ethereum.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: configData.chainId }]
+                        });
+                    } catch (switchError) {
+                        if (switchError.code === 4902) {
+                            await window.ethereum.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [{
+                                    chainId: configData.chainId,
+                                    chainName: 'Base',
+                                    rpcUrls: [configData.rpcUrl],
+                                    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }
+                                }]
+                            });
+                        } else {
+                            throw switchError;
                         }
-                    } catch (manifestError) {
-                        console.warn('⚠️ Manifesta ielāde neizdevās');
                     }
                 }
-                
-                // ✅ 2. Iegūst failus un salīdzina
+
+                // Serveris šeit vienlaikus pārbauda aktīvu subscription, NFT owner un repo piekļuvi.
                 const result = await apiJson('/api/prepare-backup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ repoName, walletAddress: userAddress })
+                    body: JSON.stringify({ repoName, walletAddress: currentAddress })
                 });
-                
+
+                if (cancelled) return;
+
+                setNftInfo({
+                    tokenId: result.tokenId,
+                    backupCount: result.backupCount,
+                    lastManifest: result.lastManifest || null,
+                    lastMerkleRoot: result.lastMerkleRoot || null
+                });
+                setPreparedJobId(result.jobId);
+
+                let previousPaths = {};
+                let previousHistory = [];
+                let previousEncryptionIVs = {};
+
+                if (result.lastManifest && result.lastManifest.startsWith('ar://')) {
+                    const prevManifestId = result.lastManifest.slice(5);
+                    if (!isValidManifestId(prevManifestId)) {
+                        throw new Error(t('invalid-manifest'));
+                    }
+
+                    setCurrentPreviousManifestId(prevManifestId);
+
+                    const manifestUrl = getValidatedManifestUrl(configData.arweaveGateway, prevManifestId);
+                    const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
+                    if (!manifestResponse.ok) throw new Error(t('manifest-load-failed'));
+
+                    const prevManifest = await manifestResponse.json();
+                    if (prevManifest && typeof prevManifest.paths === 'object' && !Array.isArray(prevManifest.paths)) {
+                        previousPaths = prevManifest.paths;
+                        setCurrentUnchangedFiles(prevManifest.paths);
+                    }
+                    if (Array.isArray(prevManifest?.history)) {
+                        previousHistory = prevManifest.history;
+                        setCurrentPreviousHistory(prevManifest.history);
+                    }
+                    if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object' && !Array.isArray(prevManifest.encryption.ivs)) {
+                        previousEncryptionIVs = prevManifest.encryption.ivs;
+                        setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
+                    }
+                }
+
                 const files = result.files || [];
-                
                 const changedFiles = [];
                 const unchangedFiles = {};
-                
+
                 for (const file of files) {
                     const previousFile = previousPaths[file.path];
-                    if (previousFile && previousFile.hash && previousFile.hash === file.hash) {
+                    if (previousFile && previousFile.hash && previousFile.hash === file.hash && isValidManifestId(previousFile.id || previousFile.zipId)) {
                         unchangedFiles[file.path] = { id: previousFile.id || previousFile.zipId, hash: file.hash };
                     } else {
                         changedFiles.push(file);
                     }
                 }
-                
-                const sizeText = formatFileSize(
-                    changedFiles.reduce((sum, file) => sum + Number(file.size), 0)
-                );
-                
-                setFileInfo({ count: changedFiles.length, sizeText, loading: false });
+
+                setCurrentPreviousBackupNumber(Number(result.backupCount || 0));
+                setFileInfo({
+                    count: changedFiles.length,
+                    sizeText: formatFileSize(changedFiles.reduce((sum, file) => sum + Number(file.size), 0)),
+                    loading: false
+                });
                 setChangedFilesForUpload(changedFiles);
                 setUnchangedFilesForUpload(unchangedFiles);
-                setPreparedJobId(result.jobId);
-                
             } catch (e) {
+                if (cancelled) return;
                 setError(getSafeErrorMessage(e));
                 setFileInfo({ count: 0, sizeText: '', loading: false });
             }
         };
-        
+
         initPage();
-    }, []);
+        return () => { cancelled = true; };
+    }, [apiJson, repoName, t, formatFileSize]);
 
     const continueBackup = useCallback(async () => {
         if (!config) {
@@ -413,14 +467,14 @@ function BackupPage() {
                                 }
                             }]
                         });
+                    } else {
+                        throw switchError;
                     }
                 }
             }
             
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signerInstance = await provider.getSigner();
-            setSigner(signerInstance);
-            
             const client = TurboFactory.authenticated({
                 signer: new InjectedEthereumSigner({ getSigner: () => signerInstance }),
                 token: 'base-eth',
@@ -428,15 +482,21 @@ function BackupPage() {
                 uploadServiceConfig: { url: config.turboUploadUrl },
                 paymentServiceConfig: { url: config.turboPaymentUrl }
             });
-            setTurboClient(client);
-            
             const backupCount = Number(nftInfo.backupCount || 0);
             let keyHex;
             
             if (backupCount === 0) {
-                const keyBytes = crypto.getRandomValues(new Uint8Array(32));
-                keyHex = ethers.hexlify(keyBytes);
-                await showMasterKey(keyHex);
+                if (!masterKeyRef.current) {
+                    const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+                    masterKeyRef.current = ethers.hexlify(keyBytes);
+                    const saved = await showMasterKey(masterKeyRef.current);
+                    if (!saved) {
+                        masterKeyRef.current = null;
+                        setIsWorking(false);
+                        return;
+                    }
+                }
+                keyHex = masterKeyRef.current;
             } else {
                 keyHex = await promptMasterKey();
                 if (!isValidMasterKey(keyHex)) {
@@ -444,6 +504,7 @@ function BackupPage() {
                     setIsWorking(false);
                     return;
                 }
+                masterKeyRef.current = keyHex;
             }
             
             await uploadZip(preparedJobId, changedFilesForUpload, unchangedFilesForUpload, keyHex, client, signerInstance);
@@ -459,160 +520,198 @@ function BackupPage() {
     }, [config, userAddress, nftInfo.backupCount, repoName, t, changedFilesForUpload, unchangedFilesForUpload, preparedJobId, showMasterKey, promptMasterKey, isValidMasterKey]);
 
     const uploadZip = useCallback(async (jobId, changedFiles, unchangedFiles, keyHex, client, signerInstance) => {
-        if (!config) {
-            setError('Konfigurācija nav ielādēta!');
+        if (!config || !jobId || !nftInfo.tokenId) {
+            setError(t('backup-session-invalid'));
             return;
         }
-        
+
         setStatus(t('creating-zip'));
         setLastStatusData({ type: 'simple', key: 'creating-zip' });
-        
+
         try {
-            const zip = new JSZip();
-            for (const file of changedFiles) {
-                const binaryString = atob(file.content);
-                const fileBuffer = new Uint8Array(binaryString.length);
-                for (let j = 0; j < binaryString.length; j++) {
-                    // ✅ LABOTS: codePointAt vietā charCodeAt
-                    fileBuffer[j] = binaryString.codePointAt(j) & 0xFF;
+            let zipTxId = uploadedZipRef.current.txId;
+            let iv = uploadedZipRef.current.iv;
+            let merkleRoot = uploadedZipRef.current.merkleRoot;
+
+            if (!zipTxId) {
+                const zip = new JSZip();
+                for (const file of changedFiles) {
+                    if (typeof file.content !== 'string') throw new Error(t('invalid-file-data'));
+                    const binaryString = atob(file.content);
+                    const fileBuffer = new Uint8Array(binaryString.length);
+                    for (let j = 0; j < binaryString.length; j++) {
+                        fileBuffer[j] = binaryString.charCodeAt(j);
+                    }
+                    zip.file(file.path, fileBuffer);
                 }
-                zip.file(file.path, fileBuffer);
+
+                const zipBuffer = await zip.generateAsync({
+                    type: 'uint8array',
+                    compression: 'DEFLATE',
+                    compressionOptions: { level: 6 }
+                });
+
+                setStatus(t('encrypting'));
+                setLastStatusData({ type: 'simple', key: 'encrypting' });
+
+                const encrypted = await encryptData(zipBuffer, keyHex);
+                const encryptedZipData = encrypted.encrypted;
+                iv = encrypted.iv;
+                merkleRoot = calculateMerkleRoot(changedFiles);
+
+                setCurrentIV(iv);
+                setCurrentMerkleRoot(merkleRoot);
+
+                setStatus(t('uploading'));
+                setLastStatusData({ type: 'uploading' });
+
+                const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
+                const zipResult = await client.uploadFile({
+                    fileStreamFactory: () => zipBlob.stream(),
+                    fileSizeFactory: () => zipBlob.size,
+                    dataItemOpts: {
+                        tags: [
+                            { name: 'App-Name', value: 'PermRepo' },
+                            { name: 'Repo', value: `${githubUser}/${repoName}` },
+                            { name: 'Type', value: 'backup-archive' },
+                            { name: 'Content-Type', value: 'application/zip' },
+                            { name: 'Encrypted', value: 'true' },
+                            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                        ]
+                    },
+                    chunkByteCount: 5 * 1024 * 1024,
+                    maxChunkConcurrency: 3,
+                    chunkingMode: 'auto'
+                });
+
+                if (!isValidManifestId(zipResult?.id)) throw new Error(t('invalid-upload-id'));
+                zipTxId = zipResult.id;
+                uploadedZipRef.current = { txId: zipTxId, iv, merkleRoot };
+
+                await apiJson('/api/save-zip-tx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId, zipTxId })
+                });
+            } else {
+                // Ja ZIP jau bija augšupielādēts, serverim atkārtoti saglabājam to pašu ID.
+                await apiJson('/api/save-zip-tx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId, zipTxId })
+                });
             }
-            
-            const zipBuffer = await zip.generateAsync({ 
-                type: 'uint8array',
-                compression: 'DEFLATE',
-                compressionOptions: { level: 6 }
-            });
-            
-            setStatus(t('encrypting'));
-            setLastStatusData({ type: 'simple', key: 'encrypting' });
-            
-            const encrypted = await encryptData(zipBuffer, keyHex);
-            const encryptedZipData = encrypted.encrypted;
-            const iv = encrypted.iv;
-            const merkleRoot = calculateMerkleRoot(changedFiles);
-            
-            setCurrentIV(iv);
-            setCurrentMerkleRoot(merkleRoot);
-            
-            setStatus(t('uploading'));
-            setLastStatusData({ type: 'uploading' });
-            
-            const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
-            
-            const zipResult = await client.uploadFile({
-                fileStreamFactory: () => zipBlob.stream(),
-                fileSizeFactory: () => zipBlob.size,
-                dataItemOpts: {
-                    tags: [
-                        { name: 'App-Name', value: 'PermRepo' },
-                        { name: 'Repo', value: `${githubUser}/${repoName}` },
-                        { name: 'Type', value: 'backup-archive' },
-                        { name: 'Content-Type', value: 'application/zip' },
-                        { name: 'Encrypted', value: 'true' },
-                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
-                    ]
-                },
-                chunkByteCount: 5 * 1024 * 1024,
-                maxChunkConcurrency: 3,
-                chunkingMode: 'auto'
-            });
-            
-            const zipTxId = zipResult.id;
-            
-            await apiJson('/api/save-zip-tx', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jobId, zipTxId })
-            });
-            
+
             setStatus(t('manifest-ready'));
             setLastStatusData({ type: 'simple', key: 'manifest-ready' });
-            
-            const history = [...currentPreviousHistory];
-            if (currentPreviousManifestId) {
-                const alreadyExists = history.some(entry => entry && entry.manifestId === currentPreviousManifestId);
-                if (!alreadyExists) {
-                    history.push({
-                        backupNumber: currentPreviousBackupNumber || history.length,
-                        manifestId: currentPreviousManifestId,
-                        url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
-                    });
+
+            let manifest = uploadedManifestRef.current.manifest;
+            let manifestTxId = uploadedManifestRef.current.txId;
+
+            if (!manifestTxId) {
+                const history = [...currentPreviousHistory];
+                if (currentPreviousManifestId) {
+                    const alreadyExists = history.some(entry => entry && entry.manifestId === currentPreviousManifestId);
+                    if (!alreadyExists) {
+                        history.push({
+                            backupNumber: currentPreviousBackupNumber || history.length,
+                            manifestId: currentPreviousManifestId,
+                            url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
+                        });
+                    }
                 }
+                history.sort((a, b) => Number(b?.backupNumber || 0) - Number(a?.backupNumber || 0));
+
+                const encryptionIVs = { ...currentPreviousEncryptionIVs };
+                if (iv && iv.length === 12) encryptionIVs[zipTxId] = Array.from(iv);
+
+                manifest = {
+                    manifest: 'arweave/paths',
+                    version: '0.2.0',
+                    encryption: { ivs: encryptionIVs },
+                    archive: {
+                        id: zipTxId,
+                        url: `/raw/${encodeURIComponent(zipTxId)}`,
+                        contains: changedFiles.map(file => ({ path: file.path, hash: file.hash }))
+                    },
+                    paths: {},
+                    history
+                };
+
+                for (const file of changedFiles) {
+                    manifest.paths[file.path] = { id: zipTxId, hash: file.hash };
+                }
+                for (const [filePath, info] of Object.entries(unchangedFiles)) {
+                    manifest.paths[filePath] = { id: info.id, hash: info.hash };
+                }
+
+                const manifestPaths = Object.keys(manifest.paths);
+                if (manifestPaths.length > 0) {
+                    manifest.index = { path: manifest.paths['README.md'] ? 'README.md' : manifestPaths[0] };
+                }
+
+                const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
+                const manifestResult = await client.uploadFile({
+                    fileStreamFactory: () => manifestBlob.stream(),
+                    fileSizeFactory: () => manifestBlob.size,
+                    dataItemOpts: {
+                        tags: [
+                            { name: 'App-Name', value: 'PermRepo' },
+                            { name: 'Type', value: 'path-manifest' },
+                            { name: 'Repo', value: `${githubUser}/${repoName}` },
+                            { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                        ]
+                    },
+                    chunkByteCount: 5 * 1024 * 1024,
+                    maxChunkConcurrency: 3,
+                    chunkingMode: 'auto'
+                });
+
+                if (!isValidManifestId(manifestResult?.id)) throw new Error(t('invalid-upload-id'));
+                manifestTxId = manifestResult.id;
+                uploadedManifestRef.current = { txId: manifestTxId, manifest };
+
+                await apiJson('/api/save-manifest-tx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId, manifestTxId, manifest })
+                });
+            } else {
+                await apiJson('/api/save-manifest-tx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId, manifestTxId, manifest })
+                });
             }
-            history.sort((a, b) => Number(b?.backupNumber || 0) - Number(a?.backupNumber || 0));
-            
-            const encryptionIVs = { ...currentPreviousEncryptionIVs };
-            if (iv && iv.length === 12) {
-                encryptionIVs[zipTxId] = Array.from(iv);
-            }
-            
-            const manifest = {
-                manifest: 'arweave/paths',
-                version: '0.2.0',
-                encryption: { ivs: encryptionIVs },
-                archive: {
-                    id: zipTxId,
-                    url: `/raw/${encodeURIComponent(zipTxId)}`,
-                    contains: changedFiles.map(file => ({ path: file.path, hash: file.hash }))
-                },
-                paths: {},
-                history
-            };
-            
-            for (const file of changedFiles) {
-                manifest.paths[file.path] = { id: zipTxId, hash: file.hash };
-            }
-            
-            for (const [filePath, info] of Object.entries(unchangedFiles)) {
-                manifest.paths[filePath] = { id: info.id, hash: info.hash };
-            }
-            
-            const manifestPaths = Object.keys(manifest.paths);
-            if (manifestPaths.length > 0) {
-                manifest.index = { path: manifest.paths['README.md'] ? 'README.md' : manifestPaths[0] };
-            }
-            
-            const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/x.arweave-manifest+json' });
-            
-            const manifestResult = await client.uploadFile({
-                fileStreamFactory: () => manifestBlob.stream(),
-                fileSizeFactory: () => manifestBlob.size,
-                dataItemOpts: {
-                    tags: [
-                        { name: 'App-Name', value: 'PermRepo' },
-                        { name: 'Type', value: 'path-manifest' },
-                        { name: 'Repo', value: `${githubUser}/${repoName}` },
-                        { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
-                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
-                    ]
-                },
-                chunkByteCount: 5 * 1024 * 1024,
-                maxChunkConcurrency: 3,
-                chunkingMode: 'auto'
-            });
-            
-            const manifestTxId = manifestResult.id;
-            
-            await apiJson('/api/save-manifest-tx', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jobId, manifestTxId, manifest })
-            });
-            
+
             setStatus(t('signing'));
             setLastStatusData({ type: 'simple', key: 'signing' });
-            
+
             const provider = new ethers.BrowserProvider(window.ethereum);
+            const accounts = await provider.send('eth_accounts', []);
+            if (!accounts[0] || accounts[0].toLowerCase() !== userAddress.toLowerCase()) {
+                throw new Error(t('wallet-changed'));
+            }
+
+            const currentSigner = await provider.getSigner();
             const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
+            const tokenId = BigInt(nftInfo.tokenId);
+            const owner = await readContract.ownerOf(tokenId);
+            if (owner.toLowerCase() !== userAddress.toLowerCase()) throw new Error(t('nft-not-owned'));
+
             const deadline = Math.floor(Date.now() / 1000) + 600;
-            const currentNonce = await readContract.getNonce(BigInt(nftInfo.tokenId));
-            const onChainBackupCount = await readContract.getBackupCount(BigInt(nftInfo.tokenId));
+            const currentNonce = await readContract.getNonce(tokenId);
+            const onChainBackupCount = await readContract.getBackupCount(tokenId);
             const manifestURI = `ar://${manifestTxId}`;
             const manifestHash = ethers.keccak256(ethers.toUtf8Bytes(manifestURI));
-            
-            const domain = { name: 'PermRepo', version: '1', chainId: Number(config.chainId), verifyingContract: config.nftAddress };
+
+            const domain = {
+                name: 'PermRepo',
+                version: '1',
+                chainId: Number(config.chainId),
+                verifyingContract: config.nftAddress
+            };
             const types = {
                 AddBackup: [
                     { name: 'tokenId', type: 'uint256' },
@@ -624,44 +723,29 @@ function BackupPage() {
                 ]
             };
             const value = {
-                tokenId: BigInt(nftInfo.tokenId),
+                tokenId,
                 backupNumber: onChainBackupCount + 1n,
                 manifestHash,
                 merkleRoot,
                 deadline: BigInt(deadline),
                 nonce: currentNonce
             };
-            
-            const signature = await signerInstance.signTypedData(domain, types, value);
-            
-            const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, signerInstance);
-            const tx = await nftWrite.addBackup(
-                BigInt(nftInfo.tokenId),
-                manifestHash,
-                merkleRoot,
-                manifestURI,
-                BigInt(deadline),
-                signature
-            );
-            
-            if (tx && tx.wait) {
-                await tx.wait();
-            }
-            
-            const newBackupCount = onChainBackupCount + 1n;
+
+            const signature = await currentSigner.signTypedData(domain, types, value);
+            const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, currentSigner);
+            const tx = await nftWrite.addBackup(tokenId, manifestHash, merkleRoot, manifestURI, BigInt(deadline), signature);
+            await tx.wait();
+
             setNftInfo({
                 tokenId: nftInfo.tokenId,
-                backupCount: newBackupCount.toString(),
+                backupCount: (onChainBackupCount + 1n).toString(),
                 lastManifest: manifestURI,
                 lastMerkleRoot: merkleRoot
             });
-            
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
-            
             setStatus(t('backup-complete'));
             setLastStatusData({ type: 'success', key: 'backup-complete' });
-            
         } catch (e) {
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
@@ -671,7 +755,7 @@ function BackupPage() {
         } finally {
             setIsWorking(false);
         }
-    }, [apiJson, t, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData]);
+    }, [apiJson, t, githubUser, repoName, config, currentPreviousHistory, currentPreviousManifestId, currentPreviousBackupNumber, currentPreviousEncryptionIVs, nftInfo.tokenId, calculateMerkleRoot, encryptData, userAddress]);
 
     if (!config) {
         return (
@@ -682,6 +766,10 @@ function BackupPage() {
             </div>
         );
     }
+
+    const finalManifestUrl = lastManifestTxId
+        ? getValidatedManifestUrl(config.arweaveGateway, lastManifestTxId)
+        : null;
 
     return (
         <div className="container">
@@ -768,7 +856,7 @@ function BackupPage() {
                             <Icon name="manifests" />
                             {' '}{t('manifest-link')}:{' '}
                             <a 
-                                href={`https://arweave.net/raw/${encodeURIComponent(lastManifestTxId)}`} 
+                                href={finalManifestUrl} 
                                 target="_blank" 
                                 rel="noopener noreferrer"
                             >
