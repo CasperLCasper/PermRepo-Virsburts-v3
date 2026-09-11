@@ -139,6 +139,22 @@ function repositoryHash(fullRepoName) {
     );
 }
 
+// ✅ JAUNS: Git blob SHA aprēķins
+// Git izmanto: SHA-1("blob " + content_length + "\0" + content)
+function calculateGitBlobSha(buffer) {
+    const header = `blob ${buffer.length}\0`;
+
+    const gitBlob = Buffer.concat([
+        Buffer.from(header, 'utf8'),
+        buffer
+    ]);
+
+    return crypto
+        .createHash('sha1')
+        .update(gitBlob)
+        .digest('hex');
+}
+
 function getProvider() {
     return new ethers.JsonRpcProvider(RPC_URL, EXPECTED_CHAIN_ID);
 }
@@ -740,6 +756,24 @@ async function getRepoFiles(
             );
         }
 
+        // ✅ 1. Faila izmēra pārbaude (ātra un saprotama)
+        if (treeEntry.size !== fileBuffer.length) {
+            throw new Error(
+                `Faila ${filePath} izmērs nesakrīt: ` +
+                `Git Tree ${treeEntry.size} vs ZIP ${fileBuffer.length}`
+            );
+        }
+
+        // ✅ 2. Git blob SHA pārbaude (kriptogrāfiskā integritāte)
+        const calculatedGitSha = calculateGitBlobSha(fileBuffer);
+
+        if (treeEntry.sha !== calculatedGitSha) {
+            throw new Error(
+                `Faila ${filePath} Git SHA nesakrīt: ` +
+                `Git Tree ${treeEntry.sha} vs aprēķināts ${calculatedGitSha}`
+            );
+        }
+
         totalBytes += fileBuffer.length;
 
         if (totalBytes > MAX_REPO_BYTES) {
@@ -748,14 +782,17 @@ async function getRepoFiles(
             );
         }
 
+        // ✅ 3. PermRepo SHA-256 manifestam
+        const sha256 = crypto
+            .createHash('sha256')
+            .update(fileBuffer)
+            .digest('hex');
+
         files.push({
             path: filePath,
             size: fileBuffer.length,
             content: fileBuffer.toString('base64'),
-            hash: crypto
-                .createHash('sha256')
-                .update(fileBuffer)
-                .digest('hex')
+            hash: sha256
         });
     }
 
@@ -1053,6 +1090,7 @@ app.get(
         req.session.oauthState =
             state;
 
+        // ✅ LABOTS: Noņemts 'read:org' — nav vajadzīgs, jo organizāciju repo tiek izfiltrēti
         const scope =
             'repo';
 
