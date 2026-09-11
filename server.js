@@ -265,13 +265,14 @@ if (!redisClient) {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
+// ✅ LABOTS: CSP ar 'wasm-unsafe-eval' — nepieciešams Turbo SDK WASM moduļiem
 app.use((req, res, next) => {
     const connectOrigins = getAllowedConnectOrigins();
 
     res.setHeader(
         'Content-Security-Policy',
         `default-src 'self'; ` +
-        `script-src 'self'; ` +
+        `script-src 'self' 'wasm-unsafe-eval'; ` +
         `style-src 'self' 'unsafe-inline'; ` +
         `img-src 'self' data: blob:; ` +
         `font-src 'self'; ` +
