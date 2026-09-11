@@ -1016,7 +1016,7 @@ function validateManifest(manifest) {
             !info ||
             typeof info !== 'object' ||
             !validateArweaveId(info.id) ||
-            !/^0x[0-9a-fA-F]{64}$/.test(
+            !/^[0-9a-fA-F]{64}$/.test(
                 info.hash
             )
         ) {
