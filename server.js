@@ -1054,7 +1054,7 @@ app.get(
             state;
 
         const scope =
-            'repo read:org';
+            'repo';
 
         const params =
             new URLSearchParams({
