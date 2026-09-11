@@ -29,16 +29,6 @@ function Icon({ name }) {
     return <img src={`/icons/${name}.svg`} className="icon-inline" alt="" aria-hidden="true" />;
 }
 
-// ✅ React komponente statusam ar ikonu
-function StatusMessage({ iconName, children, color }) {
-    return (
-        <div className="status" style={{ marginTop: '20px', textAlign: 'center', color: color || '#e6edf3' }}>
-            <Icon name={iconName} />
-            {children}
-        </div>
-    );
-}
-
 function App() {
     const navigate = useNavigate();
     const { currentLanguage, t, switchLanguage } = useLanguage();
@@ -308,23 +298,81 @@ function App() {
         }
     }, [currentLanguage, lastStatusData, walletConnected, t]);
 
+    // ✅ UZLABOTS: Automātiska tīkla un maka maiņas apstrāde
     useEffect(() => {
-        if (!window.ethereum) return undefined;
+        if (!window.ethereum || !config) return undefined;
 
-        const handleAccountsChanged = () => {
-            setWalletConnected(false);
-            setUserAddress(null);
-            setSigner(null);
-            setReposData([]);
-            setSelectedRepoName(null);
-            setError(t('wallet-changed'));
+        const expectedChainIdHex = typeof config.chainId === 'string' && config.chainId.startsWith('0x')
+            ? config.chainId
+            : `0x${Number(config.chainId).toString(16)}`;
+
+        const handleAccountsChanged = (accounts) => {
+            if (accounts.length === 0) {
+                // Lietotājs atvienoja maku
+                setWalletConnected(false);
+                setUserAddress(null);
+                setSigner(null);
+                setReposData([]);
+                setSelectedRepoName(null);
+                setError('');
+            } else {
+                // ✅ Maks mainījās — automātiski atjauno
+                const newAddress = ethers.getAddress(accounts[0]);
+                if (userAddress && newAddress.toLowerCase() !== userAddress.toLowerCase()) {
+                    setUserAddress(newAddress);
+                    setError('');
+                    setWalletConnected(false);
+                    setReposData([]);
+                    setSelectedRepoName(null);
+                    // Automātiski pārsavieno
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 500);
+                }
+            }
         };
 
-        const handleChainChanged = () => {
-            setWalletConnected(false);
-            setReposData([]);
-            setSelectedRepoName(null);
-            setError(t('network-changed'));
+        const handleChainChanged = async (chainIdHex) => {
+            // ✅ Ja tīkls ir pareizs — nekas nav jādara
+            if (chainIdHex.toLowerCase() === expectedChainIdHex.toLowerCase()) {
+                setError('');
+                return;
+            }
+
+            // ✅ Mēģina automātiski pārslēgt atpakaļ
+            try {
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: expectedChainIdHex }]
+                });
+                setError('');
+            } catch (switchError) {
+                if (switchError.code === 4001) {
+                    // Lietotājs atcēla tīkla maiņu
+                    setError(t('network-changed'));
+                    setWalletConnected(false);
+                    setReposData([]);
+                    setSelectedRepoName(null);
+                } else if (switchError.code === 4902) {
+                    // Tīkls nav pievienots — pievieno automātiski
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [{
+                                chainId: expectedChainIdHex,
+                                chainName: 'Base',
+                                rpcUrls: [config.rpcUrl],
+                                nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }
+                            }]
+                        });
+                        setError('');
+                    } catch (addError) {
+                        setError(t('network-changed'));
+                    }
+                } else {
+                    setError(t('network-changed'));
+                }
+            }
         };
 
         window.ethereum.on?.('accountsChanged', handleAccountsChanged);
@@ -334,7 +382,7 @@ function App() {
             window.ethereum.removeListener?.('accountsChanged', handleAccountsChanged);
             window.ethereum.removeListener?.('chainChanged', handleChainChanged);
         };
-    }, [t]);
+    }, [config, t, userAddress]);
 
     useEffect(() => {
         const initApp = async () => {
