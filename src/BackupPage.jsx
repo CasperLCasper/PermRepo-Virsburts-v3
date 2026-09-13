@@ -1,10 +1,24 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, {
+    useState,
+    useEffect,
+    useCallback,
+    useRef
+} from 'react';
 import { ethers } from 'ethers';
 import JSZip from 'jszip';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { useLanguage } from './LanguageContext';
-import { TurboFactory } from '@ardrive/turbo-sdk/web';
-import { InjectedEthereumSigner } from '@dha-team/arbundles';
+import {
+    useSearchParams,
+    useNavigate
+} from 'react-router-dom';
+import {
+    useLanguage
+} from './LanguageContext';
+import {
+    TurboFactory
+} from '@ardrive/turbo-sdk/web';
+import {
+    InjectedEthereumSigner
+} from '@dha-team/arbundles';
 
 const NFT_ABI = [
     "function ownerOf(uint256 tokenId) external view returns (address)",
@@ -16,7 +30,9 @@ const NFT_ABI = [
 ];
 
 // React komponente ikonai
-function Icon({ name }) {
+function Icon({
+    name
+}) {
     return (
         <img
             src={`/icons/${name}.svg`}
@@ -36,1725 +52,2477 @@ const ALLOWED_GATEWAY_HOSTS = [
 ];
 
 // Atļautās shēmas
-const ALLOWED_SCHEMES = ['https:'];
+const ALLOWED_SCHEMES = [
+    'https:'
+];
 
 // Manifesta ID validācija
-function isValidManifestId(id) {
-    return typeof id === 'string' && /^[a-zA-Z0-9_-]{43}$/.test(id);
+function isValidManifestId(
+    id
+) {
+    return (
+        typeof id === 'string' &&
+        /^[a-zA-Z0-9_-]{43}$/.test(
+            id
+        )
+    );
 }
 
 // Droša URL validācija
-function getValidatedManifestUrl(gatewayUrl, manifestId) {
-    if (!isValidManifestId(manifestId)) {
-        throw new Error('Nederīgs manifesta ID');
+function getValidatedManifestUrl(
+    gatewayUrl,
+    manifestId
+) {
+    if (
+        !isValidManifestId(
+            manifestId
+        )
+    ) {
+        throw new Error(
+            'Nederīgs manifesta ID'
+        );
     }
 
     let parsedUrl;
 
     try {
-        parsedUrl = new URL(gatewayUrl);
+        parsedUrl =
+            new URL(
+                gatewayUrl
+            );
     } catch (e) {
-        throw new Error('Nederīgs gateway URL');
+        throw new Error(
+            'Nederīgs gateway URL'
+        );
     }
 
-    if (!ALLOWED_SCHEMES.includes(parsedUrl.protocol)) {
-        throw new Error('Nederīga shēma');
+    if (
+        !ALLOWED_SCHEMES.includes(
+            parsedUrl.protocol
+        )
+    ) {
+        throw new Error(
+            'Nederīga shēma'
+        );
     }
 
-    if (!ALLOWED_GATEWAY_HOSTS.includes(parsedUrl.hostname)) {
-        throw new Error('Nederīgs gateway hosts');
+    if (
+        !ALLOWED_GATEWAY_HOSTS.includes(
+            parsedUrl.hostname
+        )
+    ) {
+        throw new Error(
+            'Nederīgs gateway hosts'
+        );
     }
 
     return `${parsedUrl.origin}/raw/${encodeURIComponent(manifestId)}`;
 }
 
 // Droša kļūdas ziņojuma iegūšana
-function getSafeErrorMessage(error) {
+function getSafeErrorMessage(
+    error
+) {
     if (!error) {
         return 'Nezināma kļūda';
     }
 
-    if (typeof error === 'string') {
-        return error.substring(0, 200);
+    if (
+        typeof error ===
+        'string'
+    ) {
+        return error.substring(
+            0,
+            200
+        );
     }
 
-    if (error.message && typeof error.message === 'string') {
-        return error.message.substring(0, 200);
+    if (
+        error.message &&
+        typeof error.message ===
+            'string'
+    ) {
+        return error.message.substring(
+            0,
+            200
+        );
     }
 
     return 'Nezināma kļūda';
 }
 
 function BackupPage() {
-    const [searchParams] = useSearchParams();
-    const navigate = useNavigate();
-    const { currentLanguage, t, switchLanguage } = useLanguage();
+    const [
+        searchParams
+    ] = useSearchParams();
 
-    const [config, setConfig] = useState(null);
+    const navigate =
+        useNavigate();
 
-    const repoName = searchParams.get('repo');
+    const {
+        currentLanguage,
+        t,
+        switchLanguage
+    } = useLanguage();
 
-    const [githubUser, setGithubUser] = useState(null);
-    const [userAddress, setUserAddress] = useState(null);
+    const [
+        config,
+        setConfig
+    ] = useState(
+        null
+    );
 
-    const [status, setStatus] = useState('');
-    const [error, setError] = useState('');
-    const [isWorking, setIsWorking] = useState(false);
-    const [backupCompleted, setBackupCompleted] = useState(false);
-    const [lastManifestTxId, setLastManifestTxId] = useState(null);
+    const repoName =
+        searchParams.get(
+            'repo'
+        );
 
-    const [nftInfo, setNftInfo] = useState({
-        tokenId: null,
-        backupCount: null,
-        lastManifest: null,
-        lastMerkleRoot: null
+    const [
+        githubUser,
+        setGithubUser
+    ] = useState(
+        null
+    );
+
+    const [
+        userAddress,
+        setUserAddress
+    ] = useState(
+        null
+    );
+
+    const [
+        status,
+        setStatus
+    ] = useState(
+        ''
+    );
+
+    const [
+        error,
+        setError
+    ] = useState(
+        ''
+    );
+
+    const [
+        isWorking,
+        setIsWorking
+    ] = useState(
+        false
+    );
+
+    const [
+        backupCompleted,
+        setBackupCompleted
+    ] = useState(
+        false
+    );
+
+    const [
+        lastManifestTxId,
+        setLastManifestTxId
+    ] = useState(
+        null
+    );
+
+    const [
+        nftInfo,
+        setNftInfo
+    ] = useState({
+        tokenId:
+            null,
+        backupCount:
+            null,
+        lastManifest:
+            null,
+        lastMerkleRoot:
+            null
     });
 
-    const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState({});
-    const [currentPreviousHistory, setCurrentPreviousHistory] = useState([]);
-    const [currentPreviousManifestId, setCurrentPreviousManifestId] = useState(null);
-    const [currentPreviousBackupNumber, setCurrentPreviousBackupNumber] = useState(null);
-    const [currentPreviousEncryptionIVs, setCurrentPreviousEncryptionIVs] = useState({});
-    const [currentMerkleRoot, setCurrentMerkleRoot] = useState(null);
-    const [currentIV, setCurrentIV] = useState(null);
+    const [
+        currentUnchangedFiles,
+        setCurrentUnchangedFiles
+    ] = useState(
+        {}
+    );
 
-    const [lastStatusData, setLastStatusData] = useState(null);
+    const [
+        currentPreviousHistory,
+        setCurrentPreviousHistory
+    ] = useState(
+        []
+    );
 
-    const [fileInfo, setFileInfo] = useState({
-        count: 0,
-        sizeText: '',
-        loading: true
+    const [
+        currentPreviousManifestId,
+        setCurrentPreviousManifestId
+    ] = useState(
+        null
+    );
+
+    const [
+        currentPreviousBackupNumber,
+        setCurrentPreviousBackupNumber
+    ] = useState(
+        null
+    );
+
+    const [
+        currentPreviousEncryptionIVs,
+        setCurrentPreviousEncryptionIVs
+    ] = useState(
+        {}
+    );
+
+    const [
+        currentMerkleRoot,
+        setCurrentMerkleRoot
+    ] = useState(
+        null
+    );
+
+    const [
+        currentIV,
+        setCurrentIV
+    ] = useState(
+        null
+    );
+
+    const [
+        lastStatusData,
+        setLastStatusData
+    ] = useState(
+        null
+    );
+
+    const [
+        fileInfo,
+        setFileInfo
+    ] = useState({
+        count:
+            0,
+        sizeText:
+            '',
+        loading:
+            true
     });
 
-    const [changedFilesForUpload, setChangedFilesForUpload] = useState([]);
-    const [unchangedFilesForUpload, setUnchangedFilesForUpload] = useState({});
-    const [preparedJobId, setPreparedJobId] = useState(null);
+    const [
+        changedFilesForUpload,
+        setChangedFilesForUpload
+    ] = useState(
+        []
+    );
+
+    const [
+        unchangedFilesForUpload,
+        setUnchangedFilesForUpload
+    ] = useState(
+        {}
+    );
+
+    const [
+        preparedJobId,
+        setPreparedJobId
+    ] = useState(
+        null
+    );
 
     // Saglabājam pašreizējā mēģinājuma progresu tikai atmiņā.
     // Tas ļauj kļūmes gadījumā turpināt jau augšupielādēto darbu,
     // neradot jaunu ZIP ar citu IV/MK.
-    const masterKeyRef = useRef(null);
+    const masterKeyRef =
+        useRef(
+            null
+        );
 
-    const uploadedZipRef = useRef({
-        txId: null,
-        iv: null,
-        merkleRoot: null
-    });
-
-    const uploadedManifestRef = useRef({
-        txId: null,
-        manifest: null
-    });
-
-    const apiJson = useCallback(async (url, options = {}) => {
-        const response = await fetch(url, {
-            credentials: 'same-origin',
-            ...options
+    const uploadedZipRef =
+        useRef({
+            txId:
+                null,
+            iv:
+                null,
+            merkleRoot:
+                null
         });
 
-        let result;
+    const uploadedManifestRef =
+        useRef({
+            txId:
+                null,
+            manifest:
+                null
+        });
 
-        try {
-            result = await response.json();
-        } catch {
-            throw new Error(`Servera kļūda: HTTP ${response.status}`);
-        }
+    const apiJson =
+        useCallback(
+            async (
+                url,
+                options = {}
+            ) => {
+                const response =
+                    await fetch(
+                        url,
+                        {
+                            credentials:
+                                'same-origin',
+                            ...options
+                        }
+                    );
 
-        if (!response.ok && !result.success) {
-            throw new Error(
-                result.error || `HTTP ${response.status}`
-            );
-        }
+                let result;
 
-        return result;
-    }, []);
+                try {
+                    result =
+                        await response.json();
+                } catch {
+                    throw new Error(
+                        `Servera kļūda: HTTP ${response.status}`
+                    );
+                }
+
+                if (
+                    !response.ok &&
+                    !result.success
+                ) {
+                    throw new Error(
+                        result.error ||
+                        `HTTP ${response.status}`
+                    );
+                }
+
+                return result;
+            },
+            []
+        );
 
     /*
      * NDJSON klienta lasītājs.
      *
-     * /api/prepare-backup vairs neatgriež milzīgu JSON objektu,
+     * /api/prepare-backup neatgriež milzīgu JSON objektu,
      * bet straumē:
      *
+     * {"type":"queued", ...}
+     * {"type":"started", ...}
      * {"type":"meta", ...}
      * {"type":"file", "file": {...}}
      * {"type":"file", "file": {...}}
      * ...
      * {"type":"complete", ...}
      *
-     * Tādējādi serverim nav jāuzbūvē un jānotur atmiņā
-     * pilns files[] masīvs ar base64 failu saturu.
+     * Serverim nav jāuzbūvē viens milzīgs JSON response.
      */
-    const apiNdjson = useCallback(async (url, options = {}) => {
-        const response = await fetch(url, {
-            credentials: 'same-origin',
-            ...options
-        });
-
-        if (!response.ok) {
-            let result = null;
-
-            try {
-                result = await response.json();
-            } catch {
-                // Servera atbilde nav JSON.
-            }
-
-            throw new Error(
-                result?.error || `HTTP ${response.status}`
-            );
-        }
-
-        if (!response.body) {
-            throw new Error('Serveris neatgrieza datu streamu.');
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-
-        let buffer = '';
-        let meta = null;
-        let complete = null;
-
-        const files = [];
-
-        const processLine = line => {
-            const trimmed = line.trim();
-
-            if (!trimmed) {
-                return;
-            }
-
-            let record;
-
-            try {
-                record = JSON.parse(trimmed);
-            } catch {
-                throw new Error(
-                    'Servera NDJSON ieraksts nav derīgs JSON.'
-                );
-            }
-
-            if (record.type === 'meta') {
-                if (!record.success || !record.jobId) {
-                    throw new Error(
-                        record.error ||
-                        'Backup sagatavošana neizdevās.'
+    const apiNdjson =
+        useCallback(
+            async (
+                url,
+                options = {},
+                onRecord = null
+            ) => {
+                const response =
+                    await fetch(
+                        url,
+                        {
+                            credentials:
+                                'same-origin',
+                            ...options
+                        }
                     );
-                }
-
-                meta = record;
-                return;
-            }
-
-            if (record.type === 'file') {
-                if (
-                    !record.file ||
-                    typeof record.file.path !== 'string'
-                ) {
-                    throw new Error(
-                        'Serveris nosūtīja nederīgu faila ierakstu.'
-                    );
-                }
-
-                files.push(record.file);
-                return;
-            }
-
-            if (record.type === 'complete') {
-                if (!record.success || !record.jobId) {
-                    throw new Error(
-                        record.error ||
-                        'Backup sagatavošana neizdevās.'
-                    );
-                }
-
-                complete = record;
-                return;
-            }
-
-            if (record.type === 'error') {
-                throw new Error(
-                    record.error ||
-                    'Backup sagatavošana neizdevās.'
-                );
-            }
-
-            throw new Error(
-                'Serveris nosūtīja nezināmu NDJSON ieraksta tipu.'
-            );
-        };
-
-        try {
-            while (true) {
-                const { value, done } = await reader.read();
-
-                if (done) {
-                    break;
-                }
-
-                buffer += decoder.decode(value, {
-                    stream: true
-                });
-
-                let newlineIndex;
-
-                while (
-                    (newlineIndex = buffer.indexOf('\n')) !== -1
-                ) {
-                    const line = buffer.slice(
-                        0,
-                        newlineIndex
-                    );
-
-                    buffer = buffer.slice(
-                        newlineIndex + 1
-                    );
-
-                    processLine(
-                        line.replace(/\r$/, '')
-                    );
-                }
-            }
-
-            buffer += decoder.decode();
-
-            if (buffer.trim()) {
-                processLine(buffer);
-            }
-        } finally {
-            reader.releaseLock();
-        }
-
-        if (!meta || !complete) {
-            throw new Error(
-                'Servera NDJSON stream beidzās nepilnīgi.'
-            );
-        }
-
-        if (complete.jobId !== meta.jobId) {
-            throw new Error(
-                'Backup job ID nesakrīt.'
-            );
-        }
-
-        if (Number(complete.fileCount) !== files.length) {
-            throw new Error(
-                'Saņemto failu skaits nesakrīt ar servera rezultātu.'
-            );
-        }
-
-        return {
-            ...meta,
-            ...complete,
-            files
-        };
-    }, []);
-
-    const formatFileSize = useCallback((bytes) => {
-        const value = Number(bytes || 0);
-
-        if (value < 1024) {
-            return `${value} B`;
-        }
-
-        if (value < 1024 * 1024) {
-            return `${(value / 1024).toFixed(2)} KB`;
-        }
-
-        if (value < 1024 * 1024 * 1024) {
-            return `${(value / 1024 / 1024).toFixed(2)} MB`;
-        }
-
-        return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`;
-    }, []);
-
-    const isValidMasterKey = useCallback((value) => {
-        try {
-            if (typeof value !== 'string') {
-                return false;
-            }
-
-            const normalized = value.trim();
-
-            if (!/^0x[0-9a-fA-F]{64}$/.test(normalized)) {
-                return false;
-            }
-
-            return ethers.getBytes(normalized).length === 32;
-        } catch {
-            return false;
-        }
-    }, []);
-
-    /*
-     * Merkle root tiek aprēķināts tikai no šī backup mainītajiem
-     * failiem. Tas ir apzināti: katram backup ir savs commitment
-     * pret konkrētajā reizē augšupielādētajiem mainītajiem failiem.
-     */
-    const calculateMerkleRoot = useCallback((files) => {
-        const fileHashes = files.map(file =>
-            ethers.keccak256(
-                ethers.toUtf8Bytes(file.hash || '')
-            )
-        );
-
-        if (fileHashes.length === 0) {
-            return '0x0000000000000000000000000000000000000000000000000000000000000000';
-        }
-
-        return ethers.keccak256(
-            ethers.AbiCoder.defaultAbiCoder().encode(
-                ['bytes32[]'],
-                [fileHashes]
-            )
-        );
-    }, []);
-
-    const encryptData = useCallback(async (data, keyHex) => {
-        const keyBytes = ethers.getBytes(keyHex);
-
-        const cryptoKey = await crypto.subtle.importKey(
-            'raw',
-            keyBytes,
-            'AES-GCM',
-            false,
-            ['encrypt']
-        );
-
-        const iv = crypto.getRandomValues(
-            new Uint8Array(12)
-        );
-
-        const encrypted = await crypto.subtle.encrypt(
-            {
-                name: 'AES-GCM',
-                iv
-            },
-            cryptoKey,
-            data
-        );
-
-        return {
-            encrypted: new Uint8Array(encrypted),
-            iv
-        };
-    }, []);
-
-    const promptMasterKey = useCallback(() => {
-        return new Promise(resolve => {
-            const overlay = document.createElement('div');
-
-            overlay.style.cssText =
-                'position:fixed;inset:0;background:rgba(0,0,0,0.8);' +
-                'display:flex;justify-content:center;align-items:center;' +
-                'z-index:1000;padding:20px;';
-
-            const box = document.createElement('div');
-
-            box.style.cssText =
-                'background:#161b22;border:1px solid #30363d;' +
-                'border-radius:12px;padding:32px;max-width:480px;' +
-                'width:100%;box-sizing:border-box;';
-
-            const title = document.createElement('h2');
-
-            title.textContent = t('key-title');
-
-            title.style.cssText =
-                'color:#79c0ff;margin-bottom:16px;';
-
-            const input = document.createElement('input');
-
-            input.type = 'password';
-            input.placeholder = t('enter-key');
-
-            input.style.cssText =
-                'width:100%;padding:12px;background:#0d1117;' +
-                'border:1px solid #30363d;border-radius:8px;' +
-                'color:#e6edf3;font-size:16px;margin-bottom:16px;' +
-                'box-sizing:border-box;';
-
-            const confirmButton = document.createElement('button');
-
-            confirmButton.textContent = t('confirm-key');
-
-            confirmButton.style.cssText =
-                'width:100%;padding:12px;background:#238636;' +
-                'color:#fff;border:none;border-radius:8px;' +
-                'font-size:16px;cursor:pointer;';
-
-            const cancelButton = document.createElement('button');
-
-            cancelButton.textContent = t('cancel');
-
-            cancelButton.style.cssText =
-                'width:100%;padding:12px;background:#30363d;' +
-                'color:#fff;border:none;border-radius:8px;' +
-                'font-size:16px;cursor:pointer;margin-top:8px;';
-
-            box.appendChild(title);
-            box.appendChild(input);
-            box.appendChild(confirmButton);
-            box.appendChild(cancelButton);
-
-            overlay.appendChild(box);
-            document.body.appendChild(overlay);
-
-            const cleanup = () => {
-                overlay.remove();
-            };
-
-            const submit = () => {
-                const value = input.value.trim();
-
-                cleanup();
-                resolve(value);
-            };
-
-            confirmButton.onclick = submit;
-
-            cancelButton.onclick = () => {
-                cleanup();
-                resolve(null);
-            };
-
-            input.addEventListener('keydown', e => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    submit();
-                }
-
-                if (e.key === 'Escape') {
-                    cleanup();
-                    resolve(null);
-                }
-            });
-
-            input.focus();
-        });
-    }, [t]);
-
-    const showMasterKey = useCallback((keyToShow) => {
-        return new Promise(resolve => {
-            const modal = document.createElement('div');
-
-            modal.style.cssText =
-                'position:fixed;inset:0;background:rgba(0,0,0,0.8);' +
-                'display:flex;justify-content:center;align-items:center;' +
-                'z-index:1000;padding:20px;';
-
-            const box = document.createElement('div');
-
-            box.style.cssText =
-                'background:#161b22;border:1px solid #30363d;' +
-                'border-radius:12px;padding:32px;max-width:480px;' +
-                'width:100%;box-sizing:border-box;';
-
-            const title = document.createElement('h2');
-
-            title.textContent = t('key-title');
-
-            title.style.cssText =
-                'color:#79c0ff;margin-bottom:16px;';
-
-            const description = document.createElement('p');
-
-            description.textContent = t('key-description');
-
-            description.style.cssText =
-                'color:#b0b8c4;margin-bottom:16px;';
-
-            const keyBox = document.createElement('div');
-
-            keyBox.textContent = keyToShow;
-
-            keyBox.style.cssText =
-                'background:#0d1117;border:1px solid #30363d;' +
-                'border-radius:8px;padding:16px;margin-bottom:16px;' +
-                'word-break:break-all;font-family:monospace;' +
-                'color:#e6edf3;';
-
-            const copyButton = document.createElement('button');
-
-            copyButton.textContent = t('copy-key');
-
-            copyButton.style.cssText =
-                'width:100%;padding:12px;background:#238636;' +
-                'color:#fff;border:none;border-radius:8px;' +
-                'font-size:16px;cursor:pointer;margin-bottom:8px;';
-
-            const downloadButton = document.createElement('button');
-
-            downloadButton.textContent = t('download-key');
-
-            downloadButton.style.cssText =
-                'width:100%;padding:12px;background:#21262d;' +
-                'color:#fff;border:none;border-radius:8px;' +
-                'font-size:16px;cursor:pointer;margin-bottom:8px;';
-
-            const closeButton = document.createElement('button');
-
-            closeButton.textContent = t('saving-key');
-
-            closeButton.style.cssText =
-                'width:100%;padding:12px;background:#f85149;' +
-                'color:#fff;border:none;border-radius:8px;' +
-                'font-size:16px;cursor:pointer;';
-
-            box.appendChild(title);
-            box.appendChild(description);
-            box.appendChild(keyBox);
-            box.appendChild(copyButton);
-            box.appendChild(downloadButton);
-            box.appendChild(closeButton);
-
-            modal.appendChild(box);
-            document.body.appendChild(modal);
-
-            copyButton.onclick = async () => {
-                try {
-                    await navigator.clipboard.writeText(
-                        keyToShow
-                    );
-
-                    copyButton.textContent = 'OK';
-                } catch {
-                    copyButton.textContent = 'FAIL';
-                }
-            };
-
-            downloadButton.onclick = () => {
-                const blob = new Blob(
-                    [keyToShow],
-                    {
-                        type: 'text/plain;charset=utf-8'
-                    }
-                );
-
-                const url = URL.createObjectURL(blob);
-
-                const anchor = document.createElement('a');
-
-                anchor.href = url;
-                anchor.download =
-                    `permrepo-master-key-${
-                        repoName?.replace(/[^\w.-]/g, '_') ||
-                        'backup'
-                    }.txt`;
-
-                document.body.appendChild(anchor);
-                anchor.click();
-                anchor.remove();
-
-                URL.revokeObjectURL(url);
-            };
-
-            closeButton.onclick = () => {
-                modal.remove();
-                resolve(true);
-            };
-        });
-    }, [t, repoName]);
-
-    const renderStatusFromData = useCallback(() => {
-        if (!lastStatusData) {
-            return;
-        }
-
-        const data = lastStatusData;
-
-        switch (data.type) {
-            case 'uploading':
-                setStatus(t('uploading'));
-                break;
-
-            case 'success':
-                setStatus(t(data.key));
-                break;
-
-            case 'simple':
-                setStatus(t(data.key));
-                break;
-
-            default:
-                setStatus(t(data.key));
-        }
-    }, [lastStatusData, t]);
-
-    useEffect(() => {
-        if (lastStatusData) {
-            renderStatusFromData();
-        }
-    }, [
-        currentLanguage,
-        lastStatusData,
-        renderStatusFromData
-    ]);
-
-    useEffect(() => {
-        let cancelled = false;
-
-        const initPage = async () => {
-            try {
-                const configData = await apiJson('/api/config');
-
-                if (cancelled) {
-                    return;
-                }
-
-                setConfig(configData);
 
                 if (
-                    !repoName ||
-                    !/^[a-zA-Z0-9_.-]{1,100}$/.test(repoName)
+                    !response.ok
                 ) {
-                    setError(t('invalid-repo'));
+                    let result =
+                        null;
 
-                    setFileInfo({
-                        count: 0,
-                        sizeText: '',
-                        loading: false
-                    });
-
-                    return;
-                }
-
-                const userData = await apiJson(
-                    '/api/github/user'
-                );
-
-                if (!userData.success) {
-                    window.location.href =
-                        '/api/github/login';
-
-                    return;
-                }
-
-                setGithubUser(userData.user);
-
-                if (!window.ethereum) {
-                    setError(t('connect-wallet'));
-
-                    setFileInfo({
-                        count: 0,
-                        sizeText: '',
-                        loading: false
-                    });
-
-                    return;
-                }
-
-                const provider =
-                    new ethers.BrowserProvider(
-                        window.ethereum
-                    );
-
-                const accounts =
-                    await provider.send(
-                        'eth_accounts',
-                        []
-                    );
-
-                if (!accounts[0]) {
-                    setError(t('connect-wallet'));
-
-                    setFileInfo({
-                        count: 0,
-                        sizeText: '',
-                        loading: false
-                    });
-
-                    return;
-                }
-
-                const currentAddress =
-                    ethers.getAddress(accounts[0]);
-
-                setUserAddress(currentAddress);
-
-                const currentChainId =
-                    await window.ethereum.request({
-                        method: 'eth_chainId'
-                    });
-
-                if (
-                    Number.parseInt(
-                        currentChainId,
-                        16
-                    ) !== Number(configData.chainId)
-                ) {
                     try {
-                        await window.ethereum.request({
-                            method:
-                                'wallet_switchEthereumChain',
-                            params: [
+                        result =
+                            await response.json();
+                    } catch {
+                        // Servera atbilde nav JSON.
+                    }
+
+                    throw new Error(
+                        result?.error ||
+                        `HTTP ${response.status}`
+                    );
+                }
+
+                if (
+                    !response.body
+                ) {
+                    throw new Error(
+                        'Serveris neatgrieza datu streamu.'
+                    );
+                }
+
+                const reader =
+                    response.body.getReader();
+
+                const decoder =
+                    new TextDecoder(
+                        'utf-8'
+                    );
+
+                let buffer =
+                    '';
+
+                let meta =
+                    null;
+
+                let complete =
+                    null;
+
+                let queued =
+                    null;
+
+                const files =
+                    [];
+
+                const processLine =
+                    line => {
+                        const trimmed =
+                            line.trim();
+
+                        if (
+                            !trimmed
+                        ) {
+                            return;
+                        }
+
+                        let record;
+
+                        try {
+                            record =
+                                JSON.parse(
+                                    trimmed
+                                );
+                        } catch {
+                            throw new Error(
+                                'Servera NDJSON ieraksts nav derīgs JSON.'
+                            );
+                        }
+
+                        if (
+                            typeof onRecord ===
+                            'function'
+                        ) {
+                            onRecord(
+                                record
+                            );
+                        }
+
+                        if (
+                            record.type ===
+                            'queued'
+                        ) {
+                            if (
+                                !record.success ||
+                                !record.jobId
+                            ) {
+                                throw new Error(
+                                    record.error ||
+                                    'Backup rindu neizdevās izveidot.'
+                                );
+                            }
+
+                            queued =
+                                record;
+
+                            return;
+                        }
+
+                        if (
+                            record.type ===
+                            'started'
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            record.type ===
+                            'meta'
+                        ) {
+                            if (
+                                !record.success ||
+                                !record.jobId
+                            ) {
+                                throw new Error(
+                                    record.error ||
+                                    'Backup sagatavošana neizdevās.'
+                                );
+                            }
+
+                            meta =
+                                record;
+
+                            return;
+                        }
+
+                        if (
+                            record.type ===
+                            'file'
+                        ) {
+                            if (
+                                !record.file ||
+                                typeof record.file.path !==
+                                    'string'
+                            ) {
+                                throw new Error(
+                                    'Serveris nosūtīja nederīgu faila ierakstu.'
+                                );
+                            }
+
+                            files.push(
+                                record.file
+                            );
+
+                            return;
+                        }
+
+                        if (
+                            record.type ===
+                            'complete'
+                        ) {
+                            if (
+                                !record.success ||
+                                !record.jobId
+                            ) {
+                                throw new Error(
+                                    record.error ||
+                                    'Backup sagatavošana neizdevās.'
+                                );
+                            }
+
+                            complete =
+                                record;
+
+                            return;
+                        }
+
+                        if (
+                            record.type ===
+                            'error'
+                        ) {
+                            throw new Error(
+                                record.error ||
+                                'Backup sagatavošana neizdevās.'
+                            );
+                        }
+
+                        throw new Error(
+                            'Serveris nosūtīja nezināmu NDJSON ieraksta tipu.'
+                        );
+                    };
+
+                try {
+                    while (
+                        true
+                    ) {
+                        const {
+                            value,
+                            done
+                        } =
+                            await reader.read();
+
+                        if (
+                            done
+                        ) {
+                            break;
+                        }
+
+                        buffer +=
+                            decoder.decode(
+                                value,
                                 {
-                                    chainId:
-                                        configData.chainId
+                                    stream:
+                                        true
                                 }
-                            ]
-                        });
-                    } catch (switchError) {
-                        if (switchError.code === 4902) {
-                            await window.ethereum.request({
-                                method:
-                                    'wallet_addEthereumChain',
-                                params: [
-                                    {
-                                        chainId:
-                                            configData.chainId,
-                                        chainName: 'Base',
-                                        rpcUrls: [
-                                            configData.rpcUrl
-                                        ],
-                                        nativeCurrency: {
-                                            name: 'ETH',
-                                            symbol: 'ETH',
-                                            decimals: 18
-                                        }
-                                    }
-                                ]
-                            });
-                        } else {
-                            throw switchError;
+                            );
+
+                        let newlineIndex;
+
+                        while (
+                            (
+                                newlineIndex =
+                                    buffer.indexOf(
+                                        '\n'
+                                    )
+                            ) !== -1
+                        ) {
+                            const line =
+                                buffer.slice(
+                                    0,
+                                    newlineIndex
+                                );
+
+                            buffer =
+                                buffer.slice(
+                                    newlineIndex +
+                                        1
+                                );
+
+                            processLine(
+                                line.replace(
+                                    /\r$/,
+                                    ''
+                                )
+                            );
                         }
                     }
-                }
 
-                /*
-                 * Serveris šeit vienlaikus pārbauda:
-                 * - aktīvu subscription
-                 * - NFT owner
-                 * - repo piekļuvi
-                 *
-                 * /api/prepare-backup tagad atgriež NDJSON streamu.
-                 */
-                const result = await apiNdjson(
-                    '/api/prepare-backup',
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type':
-                                'application/json'
-                        },
-                        body: JSON.stringify({
-                            repoName,
-                            walletAddress:
-                                currentAddress
-                        })
+                    buffer +=
+                        decoder.decode();
+
+                    if (
+                        buffer.trim()
+                    ) {
+                        processLine(
+                            buffer
+                        );
                     }
-                );
-
-                if (cancelled) {
-                    return;
+                } finally {
+                    reader.releaseLock();
                 }
-
-                setNftInfo({
-                    tokenId: result.tokenId,
-                    backupCount:
-                        result.backupCount,
-                    lastManifest:
-                        result.lastManifest ||
-                        null,
-                    lastMerkleRoot:
-                        result.lastMerkleRoot ||
-                        null
-                });
-
-                setPreparedJobId(
-                    result.jobId
-                );
-
-                let previousPaths = {};
-                let previousHistory = [];
-                let previousEncryptionIVs = {};
 
                 if (
-                    result.lastManifest &&
-                    result.lastManifest.startsWith('ar://')
+                    !meta ||
+                    !complete
                 ) {
-                    const prevManifestId =
-                        result.lastManifest.slice(5);
-
-                    if (
-                        !isValidManifestId(
-                            prevManifestId
-                        )
-                    ) {
-                        throw new Error(
-                            t('invalid-manifest')
-                        );
-                    }
-
-                    setCurrentPreviousManifestId(
-                        prevManifestId
+                    throw new Error(
+                        'Servera NDJSON stream beidzās nepilnīgi.'
                     );
-
-                    const manifestUrl =
-                        getValidatedManifestUrl(
-                            configData.arweaveGateway,
-                            prevManifestId
-                        );
-
-                    const manifestResponse =
-                        await fetch(
-                            manifestUrl,
-                            {
-                                cache: 'no-store'
-                            }
-                        );
-
-                    if (!manifestResponse.ok) {
-                        throw new Error(
-                            t('manifest-load-failed')
-                        );
-                    }
-
-                    const prevManifest =
-                        await manifestResponse.json();
-
-                    if (
-                        prevManifest &&
-                        typeof prevManifest.paths ===
-                            'object' &&
-                        !Array.isArray(
-                            prevManifest.paths
-                        )
-                    ) {
-                        previousPaths =
-                            prevManifest.paths;
-
-                        setCurrentUnchangedFiles(
-                            prevManifest.paths
-                        );
-                    }
-
-                    if (
-                        Array.isArray(
-                            prevManifest?.history
-                        )
-                    ) {
-                        previousHistory =
-                            prevManifest.history;
-
-                        setCurrentPreviousHistory(
-                            prevManifest.history
-                        );
-                    }
-
-                    if (
-                        prevManifest?.encryption?.ivs &&
-                        typeof
-                            prevManifest.encryption.ivs ===
-                            'object' &&
-                        !Array.isArray(
-                            prevManifest.encryption.ivs
-                        )
-                    ) {
-                        previousEncryptionIVs =
-                            prevManifest.encryption.ivs;
-
-                        setCurrentPreviousEncryptionIVs(
-                            prevManifest.encryption.ivs
-                        );
-                    }
                 }
 
-                const files = result.files || [];
-
-                const changedFiles = [];
-                const unchangedFiles = {};
-
-                for (const file of files) {
-                    const previousFile =
-                        previousPaths[file.path];
-
-                    if (
-                        previousFile &&
-                        previousFile.hash &&
-                        previousFile.hash ===
-                            file.hash &&
-                        isValidManifestId(
-                            previousFile.id ||
-                            previousFile.zipId
-                        )
-                    ) {
-                        unchangedFiles[file.path] = {
-                            id:
-                                previousFile.id ||
-                                previousFile.zipId,
-                            hash: file.hash
-                        };
-                    } else {
-                        changedFiles.push(file);
-                    }
+                if (
+                    complete.jobId !==
+                    meta.jobId
+                ) {
+                    throw new Error(
+                        'Backup job ID nesakrīt.'
+                    );
                 }
 
-                setCurrentPreviousBackupNumber(
+                if (
                     Number(
-                        result.backupCount || 0
-                    )
-                );
-
-                setFileInfo({
-                    count:
-                        changedFiles.length,
-                    sizeText:
-                        formatFileSize(
-                            changedFiles.reduce(
-                                (sum, file) =>
-                                    sum +
-                                    Number(file.size),
-                                0
-                            )
-                        ),
-                    loading: false
-                });
-
-                setChangedFilesForUpload(
-                    changedFiles
-                );
-
-                setUnchangedFilesForUpload(
-                    unchangedFiles
-                );
-            } catch (e) {
-                if (cancelled) {
-                    return;
-                }
-
-                setError(
-                    getSafeErrorMessage(e)
-                );
-
-                setFileInfo({
-                    count: 0,
-                    sizeText: '',
-                    loading: false
-                });
-            }
-        };
-
-        initPage();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [
-        apiJson,
-        apiNdjson,
-        repoName,
-        t,
-        formatFileSize
-    ]);
-
-    const continueBackup = useCallback(async () => {
-        if (!config) {
-            setError(
-                'Konfigurācija vēl nav ielādēta!'
-            );
-            return;
-        }
-
-        if (!window.ethereum || !userAddress) {
-            setError(t('connect-wallet'));
-            return;
-        }
-
-        if (changedFilesForUpload.length === 0) {
-            setStatus(t('no-changes'));
-
-            setLastStatusData({
-                type: 'simple',
-                key: 'no-changes'
-            });
-
-            return;
-        }
-
-        try {
-            setIsWorking(true);
-            setError('');
-
-            const currentChainId =
-                await window.ethereum.request({
-                    method: 'eth_chainId'
-                });
-
-            if (
-                Number.parseInt(
-                    currentChainId,
-                    16
-                ) !== Number(config.chainId)
-            ) {
-                try {
-                    await window.ethereum.request({
-                        method:
-                            'wallet_switchEthereumChain',
-                        params: [
-                            {
-                                chainId:
-                                    config.chainId
-                            }
-                        ]
-                    });
-                } catch (switchError) {
-                    if (switchError.code === 4902) {
-                        await window.ethereum.request({
-                            method:
-                                'wallet_addEthereumChain',
-                            params: [
-                                {
-                                    chainId:
-                                        config.chainId,
-                                    chainName: 'Base',
-                                    rpcUrls: [
-                                        config.rpcUrl
-                                    ],
-                                    nativeCurrency: {
-                                        name: 'ETH',
-                                        symbol: 'ETH',
-                                        decimals: 18
-                                    }
-                                }
-                            ]
-                        });
-                    } else {
-                        throw switchError;
-                    }
-                }
-            }
-
-            const provider =
-                new ethers.BrowserProvider(
-                    window.ethereum
-                );
-
-            const signerInstance =
-                await provider.getSigner();
-
-            const client =
-                TurboFactory.authenticated({
-                    signer:
-                        new InjectedEthereumSigner({
-                            getSigner: () =>
-                                signerInstance
-                        }),
-                    token: 'base-eth',
-                    gatewayUrl:
-                        config.rpcUrl,
-                    uploadServiceConfig: {
-                        url:
-                            config.turboUploadUrl
-                    },
-                    paymentServiceConfig: {
-                        url:
-                            config.turboPaymentUrl
-                    }
-                });
-
-            const backupCount =
-                Number(
-                    nftInfo.backupCount || 0
-                );
-
-            let keyHex;
-
-            if (backupCount === 0) {
-                if (!masterKeyRef.current) {
-                    const keyBytes =
-                        crypto.getRandomValues(
-                            new Uint8Array(32)
-                        );
-
-                    masterKeyRef.current =
-                        ethers.hexlify(
-                            keyBytes
-                        );
-
-                    const saved =
-                        await showMasterKey(
-                            masterKeyRef.current
-                        );
-
-                    if (!saved) {
-                        masterKeyRef.current =
-                            null;
-
-                        setIsWorking(false);
-
-                        return;
-                    }
-                }
-
-                keyHex =
-                    masterKeyRef.current;
-            } else {
-                keyHex =
-                    await promptMasterKey();
-
-                if (
-                    !isValidMasterKey(
-                        keyHex
-                    )
+                        complete.fileCount
+                    ) !==
+                    files.length
                 ) {
-                    setError(
-                        t('encrypted-required')
+                    throw new Error(
+                        'Saņemto failu skaits nesakrīt ar servera rezultātu.'
+                    );
+                }
+
+                return {
+                    ...meta,
+                    ...complete,
+                    queue:
+                        queued,
+                    files
+                };
+            },
+            []
+        );
+
+    const formatFileSize =
+        useCallback(
+            bytes => {
+                const value =
+                    Number(
+                        bytes ||
+                        0
                     );
 
-                    setIsWorking(false);
-
-                    return;
+                if (
+                    value <
+                    1024
+                ) {
+                    return `${value} B`;
                 }
+
+                if (
+                    value <
+                    1024 *
+                        1024
+                ) {
+                    return `${(
+                        value /
+                        1024
+                    ).toFixed(
+                        2
+                    )} KB`;
+                }
+
+                if (
+                    value <
+                    1024 *
+                        1024 *
+                        1024
+                ) {
+                    return `${(
+                        value /
+                        1024 /
+                        1024
+                    ).toFixed(
+                        2
+                    )} MB`;
+                }
+
+                return `${(
+                    value /
+                    1024 /
+                    1024 /
+                    1024
+                ).toFixed(
+                    2
+                )} GB`;
+            },
+            []
+        );
+
+    const generateMasterKey =
+        useCallback(
+            async () => {
+                const keyBytes =
+                    crypto.getRandomValues(
+                        new Uint8Array(
+                            32
+                        )
+                    );
+
+                const keyHex =
+                    Array.from(
+                        keyBytes
+                    )
+                        .map(
+                            byte =>
+                                byte
+                                    .toString(
+                                        16
+                                    )
+                                    .padStart(
+                                        2,
+                                        '0'
+                                    )
+                        )
+                        .join(
+                            ''
+                        );
 
                 masterKeyRef.current =
                     keyHex;
-            }
 
-            await uploadZip(
-                preparedJobId,
-                changedFilesForUpload,
-                unchangedFilesForUpload,
-                keyHex,
-                client,
-                signerInstance
-            );
-        } catch (e) {
-            if (
-                e.code === 'ACTION_REJECTED' ||
-                e.code === 4001
-            ) {
-                setError(
-                    t('transaction-cancelled')
+                return keyHex;
+            },
+            []
+        );
+
+    const encryptData =
+        useCallback(
+            async (
+                data,
+                masterKeyHex
+            ) => {
+                const keyBytes =
+                    new Uint8Array(
+                        masterKeyHex
+                            .match(
+                                /.{2}/g
+                            )
+                            .map(
+                                byte =>
+                                    parseInt(
+                                        byte,
+                                        16
+                                    )
+                            )
+                    );
+
+                const cryptoKey =
+                    await window.crypto.subtle.importKey(
+                        'raw',
+                        keyBytes,
+                        {
+                            name:
+                                'AES-GCM'
+                        },
+                        false,
+                        [
+                            'encrypt'
+                        ]
+                    );
+
+                const iv =
+                    window.crypto.getRandomValues(
+                        new Uint8Array(
+                            12
+                        )
+                    );
+
+                const encrypted =
+                    await window.crypto.subtle.encrypt(
+                        {
+                            name:
+                                'AES-GCM',
+                            iv
+                        },
+                        cryptoKey,
+                        data
+                    );
+
+                return {
+                    encrypted:
+                        new Uint8Array(
+                            encrypted
+                        ),
+                    iv
+                };
+            },
+            []
+        );
+
+    const calculateSha256 =
+        useCallback(
+            async buffer => {
+                const digest =
+                    await crypto.subtle.digest(
+                        'SHA-256',
+                        buffer
+                    );
+
+                return Array.from(
+                    new Uint8Array(
+                        digest
+                    )
+                )
+                    .map(
+                        byte =>
+                            byte
+                                .toString(
+                                    16
+                                )
+                                .padStart(
+                                    2,
+                                    '0'
+                                )
+                    )
+                    .join(
+                        ''
+                    );
+            },
+            []
+        );
+
+    const calculateMerkleRoot =
+        useCallback(
+            async files => {
+                if (
+                    !files ||
+                    files.length ===
+                        0
+                ) {
+                    return ethers.ZeroHash;
+                }
+
+                let level =
+                    [];
+
+                for (
+                    const file of
+                    files
+                ) {
+                    const encoded =
+                        ethers.solidityPacked(
+                            [
+                                'string',
+                                'bytes32',
+                                'uint256'
+                            ],
+                            [
+                                file.path,
+                                `0x${file.hash}`,
+                                BigInt(
+                                    file.size
+                                )
+                            ]
+                        );
+
+                    level.push(
+                        ethers.keccak256(
+                            encoded
+                        )
+                    );
+                }
+
+                while (
+                    level.length >
+                    1
+                ) {
+                    const next =
+                        [];
+
+                    for (
+                        let i = 0;
+                        i < level.length;
+                        i += 2
+                    ) {
+                        const left =
+                            level[i];
+
+                        const right =
+                            level[i + 1] ||
+                            left;
+
+                        const ordered =
+                            left.toLowerCase() <
+                            right.toLowerCase()
+                                ? [
+                                      left,
+                                      right
+                                  ]
+                                : [
+                                      right,
+                                      left
+                                  ];
+
+                        next.push(
+                            ethers.keccak256(
+                                ethers.concat(
+                                    ordered
+                                )
+                            )
+                        );
+                    }
+
+                    level =
+                        next;
+                }
+
+                return level[0];
+            },
+            []
+        );
+
+    const loadManifest =
+        useCallback(
+            async (
+                manifestId
+            ) => {
+                if (
+                    !config?.arweaveGateway
+                ) {
+                    throw new Error(
+                        t(
+                            'manifest-load-failed'
+                        )
+                    );
+                }
+
+                if (
+                    !isValidManifestId(
+                        manifestId
+                    )
+                ) {
+                    throw new Error(
+                        t(
+                            'invalid-manifest'
+                        )
+                    );
+                }
+
+                const url =
+                    getValidatedManifestUrl(
+                        config.arweaveGateway,
+                        manifestId
+                    );
+
+                const response =
+                    await fetch(
+                        url,
+                        {
+                            cache:
+                                'no-store'
+                        }
+                    );
+
+                if (
+                    !response.ok
+                ) {
+                    throw new Error(
+                        t(
+                            'manifest-load-failed'
+                        )
+                    );
+                }
+
+                const manifest =
+                    await response.json();
+
+                validateManifestData(
+                    manifest
                 );
-            } else {
-                setError(
-                    getSafeErrorMessage(e)
+
+                return manifest;
+            },
+            [
+                config,
+                t
+            ]
+        );
+
+    const validateManifestData =
+        useCallback(
+            manifest => {
+                if (
+                    !manifest ||
+                    typeof manifest !==
+                        'object'
+                ) {
+                    throw new Error(
+                        t(
+                            'invalid-manifest'
+                        )
+                    );
+                }
+
+                if (
+                    !manifest.archive ||
+                    typeof manifest.archive.id !==
+                        'string' ||
+                    !isValidManifestId(
+                        manifest.archive.id
+                    )
+                ) {
+                    throw new Error(
+                        t(
+                            'invalid-manifest'
+                        )
+                    );
+                }
+
+                return true;
+            },
+            [
+                t
+            ]
+        );
+
+    const showMasterKeyModal =
+        useCallback(
+            key => {
+                return new Promise(
+                    resolve => {
+                        const overlay =
+                            document.createElement(
+                                'div'
+                            );
+
+                        overlay.style.position =
+                            'fixed';
+                        overlay.style.inset =
+                            '0';
+                        overlay.style.background =
+                            'rgba(0,0,0,0.8)';
+                        overlay.style.display =
+                            'flex';
+                        overlay.style.alignItems =
+                            'center';
+                        overlay.style.justifyContent =
+                            'center';
+                        overlay.style.zIndex =
+                            '9999';
+                        overlay.style.padding =
+                            '20px';
+
+                        const modal =
+                            document.createElement(
+                                'div'
+                            );
+
+                        modal.style.background =
+                            '#111820';
+                        modal.style.border =
+                            '1px solid rgba(255,255,255,0.12)';
+                        modal.style.borderRadius =
+                            '16px';
+                        modal.style.padding =
+                            '28px';
+                        modal.style.maxWidth =
+                            '620px';
+                        modal.style.width =
+                            '100%';
+                        modal.style.color =
+                            '#fff';
+
+                        const title =
+                            document.createElement(
+                                'h2'
+                            );
+
+                        title.textContent =
+                            t(
+                                'key-title'
+                            );
+
+                        title.style.marginBottom =
+                            '12px';
+
+                        const description =
+                            document.createElement(
+                                'p'
+                            );
+
+                        description.textContent =
+                            t(
+                                'key-description'
+                            );
+
+                        description.style.marginBottom =
+                            '16px';
+
+                        const textarea =
+                            document.createElement(
+                                'textarea'
+                            );
+
+                        textarea.value =
+                            key;
+
+                        textarea.readOnly =
+                            true;
+
+                        textarea.style.width =
+                            '100%';
+
+                        textarea.style.minHeight =
+                            '110px';
+
+                        textarea.style.padding =
+                            '12px';
+
+                        textarea.style.background =
+                            '#0a0e14';
+
+                        textarea.style.color =
+                            '#fff';
+
+                        textarea.style.border =
+                            '1px solid rgba(255,255,255,0.12)';
+
+                        textarea.style.borderRadius =
+                            '8px';
+
+                        textarea.style.fontFamily =
+                            'monospace';
+
+                        textarea.style.fontSize =
+                            '13px';
+
+                        const buttonRow =
+                            document.createElement(
+                                'div'
+                            );
+
+                        buttonRow.style.display =
+                            'flex';
+
+                        buttonRow.style.flexWrap =
+                            'wrap';
+
+                        buttonRow.style.gap =
+                            '10px';
+
+                        buttonRow.style.marginTop =
+                            '16px';
+
+                        const copyButton =
+                            document.createElement(
+                                'button'
+                            );
+
+                        copyButton.textContent =
+                            t(
+                                'copy-key'
+                            );
+
+                        copyButton.className =
+                            'sign-button';
+
+                        copyButton.onclick =
+                            async () => {
+                                try {
+                                    await navigator.clipboard.writeText(
+                                        key
+                                    );
+
+                                    copyButton.textContent =
+                                        t(
+                                            'success'
+                                        );
+                                } catch {
+                                    // Clipboard var nebūt pieejams.
+                                }
+                            };
+
+                        const downloadButton =
+                            document.createElement(
+                                'button'
+                            );
+
+                        downloadButton.textContent =
+                            t(
+                                'download-key'
+                            );
+
+                        downloadButton.className =
+                            'sign-button';
+
+                        downloadButton.onclick =
+                            () => {
+                                const blob =
+                                    new Blob(
+                                        [
+                                            key
+                                        ],
+                                        {
+                                            type:
+                                                'text/plain;charset=utf-8'
+                                        }
+                                    );
+
+                                const url =
+                                    URL.createObjectURL(
+                                        blob
+                                    );
+
+                                const anchor =
+                                    document.createElement(
+                                        'a'
+                                    );
+
+                                anchor.href =
+                                    url;
+
+                                anchor.download =
+                                    `permrepo-master-key-${
+                                        repoName?.replace(
+                                            /[^\w.-]/g,
+                                            '_'
+                                        ) ||
+                                        'backup'
+                                    }.txt`;
+
+                                document.body.appendChild(
+                                    anchor
+                                );
+
+                                anchor.click();
+
+                                anchor.remove();
+
+                                URL.revokeObjectURL(
+                                    url
+                                );
+                            };
+
+                        const closeButton =
+                            document.createElement(
+                                'button'
+                            );
+
+                        closeButton.textContent =
+                            t(
+                                'saving-key'
+                            );
+
+                        closeButton.className =
+                            'sign-button';
+
+                        closeButton.onclick =
+                            () => {
+                                modal.remove();
+
+                                resolve(
+                                    true
+                                );
+                            };
+
+                        buttonRow.appendChild(
+                            copyButton
+                        );
+
+                        buttonRow.appendChild(
+                            downloadButton
+                        );
+
+                        buttonRow.appendChild(
+                            closeButton
+                        );
+
+                        modal.appendChild(
+                            title
+                        );
+
+                        modal.appendChild(
+                            description
+                        );
+
+                        modal.appendChild(
+                            textarea
+                        );
+
+                        modal.appendChild(
+                            buttonRow
+                        );
+
+                        overlay.appendChild(
+                            modal
+                        );
+
+                        document.body.appendChild(
+                            overlay
+                        );
+                    }
                 );
-            }
+            },
+            [
+                t,
+                repoName
+            ]
+        );
 
-            setIsWorking(false);
-        }
-    }, [
-        config,
-        userAddress,
-        nftInfo.backupCount,
-        repoName,
-        t,
-        changedFilesForUpload,
-        unchangedFilesForUpload,
-        preparedJobId,
-        showMasterKey,
-        promptMasterKey,
-        isValidMasterKey
-    ]);
+    const renderStatusFromData =
+        useCallback(
+            () => {
+                if (
+                    !lastStatusData
+                ) {
+                    return;
+                }
 
-    const uploadZip = useCallback(
-        async (
-            jobId,
-            changedFiles,
-            unchangedFiles,
-            keyHex,
-            client,
-            signerInstance
-        ) => {
-            if (
-                !config ||
-                !jobId ||
-                !nftInfo.tokenId
-            ) {
-                setError(
-                    t('backup-session-invalid')
-                );
+                const data =
+                    lastStatusData;
 
-                return;
-            }
+                switch (
+                    data.type
+                ) {
+                    case 'uploading':
+                        setStatus(
+                            t(
+                                'uploading'
+                            )
+                        );
+                        break;
 
-            setStatus(t('creating-zip'));
+                    case 'success':
+                        setStatus(
+                            t(
+                                data.key
+                            )
+                        );
+                        break;
 
-            setLastStatusData({
-                type: 'simple',
-                key: 'creating-zip'
-            });
+                    case 'simple':
+                        setStatus(
+                            t(
+                                data.key
+                            )
+                        );
+                        break;
 
-            try {
-                let zipTxId =
-                    uploadedZipRef.current.txId;
+                    case 'queue': {
+                        const position =
+                            Number(
+                                data.queuePosition ||
+                                0
+                            );
 
-                let iv =
-                    uploadedZipRef.current.iv;
-
-                let merkleRoot =
-                    uploadedZipRef.current.merkleRoot;
-
-                /*
-                 * Browserī tiek veidots ZIP tikai no mainītajiem
-                 * failiem. Servera GitHub ZIP vairs netiek turēts
-                 * servera RAM kā viss ZIP fails.
-                 */
-                if (!zipTxId) {
-                    const zip = new JSZip();
-
-                    for (const file of changedFiles) {
                         if (
-                            typeof file.content !==
-                            'string'
+                            position >
+                            0
                         ) {
-                            throw new Error(
-                                t('invalid-file-data')
+                            setStatus(
+                                `${t(
+                                    'backup-queued'
+                                )} ${position}. ${t(
+                                    'backup-queue-position'
+                                )}.`
+                            );
+                        } else {
+                            setStatus(
+                                t(
+                                    'backup-queued'
+                                )
                             );
                         }
 
-                        const binaryString =
-                            atob(file.content);
+                        break;
+                    }
 
-                        const fileBuffer =
-                            new Uint8Array(
-                                binaryString.length
+                    default:
+                        setStatus(
+                            t(
+                                data.key
+                            )
+                        );
+                }
+            },
+            [
+                lastStatusData,
+                t
+            ]
+        );
+
+    useEffect(
+        () => {
+            if (
+                lastStatusData
+            ) {
+                renderStatusFromData();
+            }
+        },
+        [
+            currentLanguage,
+            lastStatusData,
+            renderStatusFromData
+        ]
+    );
+
+    useEffect(
+        () => {
+            let cancelled =
+                false;
+
+            const initPage =
+                async () => {
+                    try {
+                        const configData =
+                            await apiJson(
+                                '/api/config'
                             );
+
+                        if (
+                            cancelled
+                        ) {
+                            return;
+                        }
+
+                        setConfig(
+                            configData
+                        );
+
+                        if (
+                            !repoName ||
+                            !/^[a-zA-Z0-9_.-]{1,100}$/.test(
+                                repoName
+                            )
+                        ) {
+                            setError(
+                                t(
+                                    'invalid-repo'
+                                )
+                            );
+
+                            setFileInfo({
+                                count:
+                                    0,
+                                sizeText:
+                                    '',
+                                loading:
+                                    false
+                            });
+
+                            return;
+                        }
+
+                        const userData =
+                            await apiJson(
+                                '/api/github/user'
+                            );
+
+                        if (
+                            !userData.success
+                        ) {
+                            window.location.href =
+                                '/api/github/login';
+
+                            return;
+                        }
+
+                        setGithubUser(
+                            userData.user
+                        );
+
+                        if (
+                            !window.ethereum
+                        ) {
+                            setError(
+                                t(
+                                    'connect-wallet'
+                                )
+                            );
+
+                            setFileInfo({
+                                count:
+                                    0,
+                                sizeText:
+                                    '',
+                                loading:
+                                    false
+                            });
+
+                            return;
+                        }
+
+                        const provider =
+                            new ethers.BrowserProvider(
+                                window.ethereum
+                            );
+
+                        const accounts =
+                            await provider.send(
+                                'eth_accounts',
+                                []
+                            );
+
+                        if (
+                            !accounts[0]
+                        ) {
+                            setError(
+                                t(
+                                    'connect-wallet'
+                                )
+                            );
+
+                            setFileInfo({
+                                count:
+                                    0,
+                                sizeText:
+                                    '',
+                                loading:
+                                    false
+                            });
+
+                            return;
+                        }
+
+                        const currentAddress =
+                            ethers.getAddress(
+                                accounts[0]
+                            );
+
+                        setUserAddress(
+                            currentAddress
+                        );
+
+                        const currentChainId =
+                            await window.ethereum.request(
+                                {
+                                    method:
+                                        'eth_chainId'
+                                }
+                            );
+
+                        if (
+                            Number.parseInt(
+                                currentChainId,
+                                16
+                            ) !==
+                            Number(
+                                configData.chainId
+                            )
+                        ) {
+                            try {
+                                await window.ethereum.request(
+                                    {
+                                        method:
+                                            'wallet_switchEthereumChain',
+                                        params: [
+                                            {
+                                                chainId:
+                                                    configData.chainId
+                                            }
+                                        ]
+                                    }
+                                );
+                            } catch (
+                                switchError
+                            ) {
+                                if (
+                                    switchError.code ===
+                                    4902
+                                ) {
+                                    await window.ethereum.request(
+                                        {
+                                            method:
+                                                'wallet_addEthereumChain',
+                                            params: [
+                                                {
+                                                    chainId:
+                                                        configData.chainId,
+                                                    chainName:
+                                                        'Base',
+                                                    rpcUrls: [
+                                                        configData.rpcUrl
+                                                    ],
+                                                    nativeCurrency:
+                                                        {
+                                                            name:
+                                                                'ETH',
+                                                            symbol:
+                                                                'ETH',
+                                                            decimals:
+                                                                18
+                                                        }
+                                                }
+                                            ]
+                                        }
+                                    );
+                                } else {
+                                    throw switchError;
+                                }
+                            }
+                        }
+
+                        /*
+                         * Serveris šeit vienlaikus pārbauda:
+                         * - aktīvu subscription
+                         * - NFT owner
+                         * - repo piekļuvi
+                         *
+                         * /api/prepare-backup atgriež NDJSON streamu.
+                         *
+                         * Ja serverim pašlaik nav pietiekami daudz RAM
+                         * rezervācijas, NDJSON streamā vispirms tiek
+                         * nosūtīts "queued" ieraksts un browseris
+                         * paliek gaidīt konkrētā request streamā.
+                         */
+                        const result =
+                            await apiNdjson(
+                                '/api/prepare-backup',
+                                {
+                                    method:
+                                        'POST',
+                                    headers: {
+                                        'Content-Type':
+                                            'application/json'
+                                    },
+                                    body:
+                                        JSON.stringify(
+                                            {
+                                                repoName,
+                                                walletAddress:
+                                                    currentAddress
+                                            }
+                                        )
+                                },
+                                record => {
+                                    if (
+                                        cancelled
+                                    ) {
+                                        return;
+                                    }
+
+                                    if (
+                                        record.type ===
+                                        'queued'
+                                    ) {
+                                        setLastStatusData(
+                                            {
+                                                type:
+                                                    'queue',
+                                                queuePosition:
+                                                    Number(
+                                                        record.queuePosition ||
+                                                        0
+                                                    )
+                                            }
+                                        );
+                                    } else if (
+                                        record.type ===
+                                        'started'
+                                    ) {
+                                        setLastStatusData(
+                                            {
+                                                type:
+                                                    'simple',
+                                                key:
+                                                    'preparing'
+                                            }
+                                        );
+                                    }
+                                }
+                            );
+
+                        if (
+                            cancelled
+                        ) {
+                            return;
+                        }
+
+                        setNftInfo({
+                            tokenId:
+                                result.tokenId,
+                            backupCount:
+                                result.backupCount,
+                            lastManifest:
+                                result.lastManifest ||
+                                null,
+                            lastMerkleRoot:
+                                result.lastMerkleRoot ||
+                                null
+                        });
+
+                        setPreparedJobId(
+                            result.jobId
+                        );
+
+                        let previousPaths =
+                            {};
+
+                        let previousHistory =
+                            [];
+
+                        let previousEncryptionIVs =
+                            {};
+
+                        if (
+                            result.lastManifest &&
+                            result.lastManifest.startsWith(
+                                'ar://'
+                            )
+                        ) {
+                            const prevManifestId =
+                                result.lastManifest.slice(
+                                    5
+                                );
+
+                            if (
+                                !isValidManifestId(
+                                    prevManifestId
+                                )
+                            ) {
+                                throw new Error(
+                                    t(
+                                        'invalid-manifest'
+                                    )
+                                );
+                            }
+
+                            setCurrentPreviousManifestId(
+                                prevManifestId
+                            );
+
+                            const previousManifest =
+                                await loadManifest(
+                                    prevManifestId
+                                );
+
+                            previousPaths =
+                                previousManifest.files ||
+                                {};
+
+                            previousHistory =
+                                previousManifest.history ||
+                                [];
+
+                            previousEncryptionIVs =
+                                previousManifest.encryptionIVs ||
+                                {};
+                        }
+
+                        setCurrentPreviousHistory(
+                            previousHistory
+                        );
+
+                        setCurrentPreviousEncryptionIVs(
+                            previousEncryptionIVs
+                        );
+
+                        const changedFiles =
+                            [];
+
+                        const unchangedFiles =
+                            {};
 
                         for (
-                            let j = 0;
-                            j <
-                            binaryString.length;
-                            j++
+                            const file of
+                            result.files
                         ) {
-                            fileBuffer[j] =
-                                binaryString.charCodeAt(
-                                    j
+                            const previous =
+                                previousPaths[
+                                    file.path
+                                ];
+
+                            if (
+                                previous &&
+                                previous.hash ===
+                                    file.hash
+                            ) {
+                                unchangedFiles[
+                                    file.path
+                                ] = {
+                                    ...previous
+                                };
+                            } else {
+                                changedFiles.push(
+                                    file
                                 );
+                            }
                         }
+
+                        setCurrentUnchangedFiles(
+                            unchangedFiles
+                        );
+
+                        setFileInfo({
+                            count:
+                                changedFiles.length,
+                            sizeText:
+                                formatFileSize(
+                                    changedFiles.reduce(
+                                        (
+                                            sum,
+                                            file
+                                        ) =>
+                                            sum +
+                                            Number(
+                                                file.size
+                                            ),
+                                        0
+                                    )
+                                ),
+                            loading:
+                                false
+                        });
+
+                        setChangedFilesForUpload(
+                            changedFiles
+                        );
+
+                        setUnchangedFilesForUpload(
+                            unchangedFiles
+                        );
+                    } catch (
+                        e
+                    ) {
+                        if (
+                            cancelled
+                        ) {
+                            return;
+                        }
+
+                        setError(
+                            getSafeErrorMessage(
+                                e
+                            )
+                        );
+
+                        setFileInfo({
+                            count:
+                                0,
+                            sizeText:
+                                '',
+                            loading:
+                                false
+                        });
+                    }
+                };
+
+            initPage();
+
+            return () => {
+                cancelled =
+                    true;
+            };
+        },
+        [
+            apiJson,
+            apiNdjson,
+            repoName,
+            t,
+            formatFileSize,
+            loadManifest
+        ]
+    );
+
+    const continueBackup =
+        useCallback(
+            async () => {
+                if (
+                    !config
+                ) {
+                    setError(
+                        'Konfigurācija vēl nav ielādēta!'
+                    );
+
+                    return;
+                }
+
+                if (
+                    !window.ethereum ||
+                    !userAddress
+                ) {
+                    setError(
+                        t(
+                            'connect-wallet'
+                        )
+                    );
+
+                    return;
+                }
+
+                if (
+                    changedFilesForUpload.length ===
+                    0
+                ) {
+                    setStatus(
+                        t(
+                            'no-changes'
+                        )
+                    );
+
+                    setLastStatusData(
+                        {
+                            type:
+                                'simple',
+                            key:
+                                'no-changes'
+                        }
+                    );
+
+                    return;
+                }
+
+                try {
+                    setIsWorking(
+                        true
+                    );
+
+                    setError(
+                        ''
+                    );
+
+                    const currentChainId =
+                        await window.ethereum.request(
+                            {
+                                method:
+                                    'eth_chainId'
+                            }
+                        );
+
+                    if (
+                        Number.parseInt(
+                            currentChainId,
+                            16
+                        ) !==
+                        Number(
+                            config.chainId
+                        )
+                    ) {
+                        try {
+                            await window.ethereum.request(
+                                {
+                                    method:
+                                        'wallet_switchEthereumChain',
+                                    params: [
+                                        {
+                                            chainId:
+                                                config.chainId
+                                        }
+                                    ]
+                                }
+                            );
+                        } catch (
+                            switchError
+                        ) {
+                            if (
+                                switchError.code ===
+                                4902
+                            ) {
+                                await window.ethereum.request(
+                                    {
+                                        method:
+                                            'wallet_addEthereumChain',
+                                        params: [
+                                            {
+                                                chainId:
+                                                    config.chainId,
+                                                chainName:
+                                                    'Base',
+                                                rpcUrls: [
+                                                    config.rpcUrl
+                                                ],
+                                                nativeCurrency:
+                                                    {
+                                                        name:
+                                                            'ETH',
+                                                        symbol:
+                                                            'ETH',
+                                                        decimals:
+                                                            18
+                                                    }
+                                            }
+                                        ]
+                                    }
+                                );
+                            } else {
+                                throw switchError;
+                            }
+                        }
+                    }
+
+                    let masterKey =
+                        masterKeyRef.current;
+
+                    if (
+                        !masterKey
+                    ) {
+                        masterKey =
+                            localStorage.getItem(
+                                `permrepo-master-key-${repoName}`
+                            );
+                    }
+
+                    if (
+                        !masterKey
+                    ) {
+                        masterKey =
+                            await generateMasterKey();
+
+                        await showMasterKeyModal(
+                            masterKey
+                        );
+                    }
+
+                    masterKeyRef.current =
+                        masterKey;
+
+                    setStatus(
+                        t(
+                            'creating-zip'
+                        )
+                    );
+
+                    setLastStatusData(
+                        {
+                            type:
+                                'simple',
+                            key:
+                                'creating-zip'
+                        }
+                    );
+
+                    const zip =
+                        new JSZip();
+
+                    for (
+                        const file of
+                        changedFilesForUpload
+                    ) {
+                        if (
+                            !file ||
+                            typeof file.path !==
+                                'string' ||
+                            typeof file.content !==
+                                'string'
+                        ) {
+                            throw new Error(
+                                t(
+                                    'invalid-file-data'
+                                )
+                            );
+                        }
+
+                        const binary =
+                            Uint8Array.from(
+                                atob(
+                                    file.content
+                                ),
+                                char =>
+                                    char.charCodeAt(
+                                        0
+                                    )
+                            );
 
                         zip.file(
                             file.path,
-                            fileBuffer
+                            binary
                         );
                     }
 
                     const zipBuffer =
-                        await zip.generateAsync({
-                            type: 'uint8array',
-                            compression: 'DEFLATE',
-                            compressionOptions: {
-                                level: 6
+                        await zip.generateAsync(
+                            {
+                                type:
+                                    'arraybuffer',
+                                compression:
+                                    'DEFLATE',
+                                compressionOptions:
+                                    {
+                                        level:
+                                            6
+                                    }
                             }
-                        });
+                        );
 
                     setStatus(
-                        t('encrypting')
+                        t(
+                            'encrypting'
+                        )
                     );
 
-                    setLastStatusData({
-                        type: 'simple',
-                        key: 'encrypting'
-                    });
+                    setLastStatusData(
+                        {
+                            type:
+                                'simple',
+                            key:
+                                'encrypting'
+                        }
+                    );
 
                     const encrypted =
                         await encryptData(
                             zipBuffer,
-                            keyHex
+                            masterKey
                         );
 
-                    const encryptedZipData =
+                    const encryptedBytes =
                         encrypted.encrypted;
 
-                    iv =
+                    const iv =
                         encrypted.iv;
 
-                    merkleRoot =
-                        calculateMerkleRoot(
-                            changedFiles
+                    setCurrentIV(
+                        Array.from(
+                            iv
+                        )
+                            .map(
+                                byte =>
+                                    byte
+                                        .toString(
+                                            16
+                                        )
+                                        .padStart(
+                                            2,
+                                            '0'
+                                        )
+                            )
+                            .join(
+                                ''
+                            )
+                    );
+
+                    const merkleRoot =
+                        await calculateMerkleRoot(
+                            changedFilesForUpload
                         );
 
-                    setCurrentIV(iv);
                     setCurrentMerkleRoot(
                         merkleRoot
                     );
 
-                    setStatus(
-                        t('uploading')
-                    );
+                    const provider =
+                        new ethers.BrowserProvider(
+                            window.ethereum
+                        );
 
-                    setLastStatusData({
-                        type: 'uploading'
-                    });
+                    const signer =
+                        await provider.getSigner();
 
-                    const zipBlob =
-                        new Blob(
-                            [encryptedZipData],
+                    const injectedSigner =
+                        new InjectedEthereumSigner(
+                            window.ethereum
+                        );
+
+                    const turbo =
+                        TurboFactory.authenticated(
                             {
-                                type:
-                                    'application/zip'
+                                token:
+                                    'base-eth',
+                                signer:
+                                    injectedSigner
                             }
                         );
 
-                    const zipResult =
-                        await client.uploadFile({
-                            fileStreamFactory:
-                                () =>
-                                    zipBlob.stream(),
-
-                            fileSizeFactory:
-                                () =>
-                                    zipBlob.size,
-
-                            dataItemOpts: {
-                                tags: [
-                                    {
-                                        name:
-                                            'App-Name',
-                                        value:
-                                            'PermRepo'
-                                    },
-                                    {
-                                        name:
-                                            'Repo',
-                                        value:
-                                            `${githubUser}/${repoName}`
-                                    },
-                                    {
-                                        name:
-                                            'Type',
-                                        value:
-                                            'backup-archive'
-                                    },
-                                    {
-                                        name:
-                                            'Content-Type',
-                                        value:
-                                            'application/zip'
-                                    },
-                                    {
-                                        name:
-                                            'Encrypted',
-                                        value:
-                                            'true'
-                                    },
-                                    {
-                                        name:
-                                            'Unix-Time',
-                                        value:
-                                            String(
-                                                Math.floor(
-                                                    Date.now() /
-                                                        1000
-                                                )
-                                            )
-                                    }
-                                ]
-                            },
-
-                            chunkByteCount:
-                                5 *
-                                1024 *
-                                1024,
-
-                            maxChunkConcurrency: 3,
-
-                            chunkingMode: 'auto'
+                    const uploadCost =
+                        await turbo.getUploadCosts({
+                            bytes:
+                                encryptedBytes.length
                         });
 
-                    if (
-                        !isValidManifestId(
-                            zipResult?.id
-                        )
-                    ) {
-                        throw new Error(
-                            t('invalid-upload-id')
+                    const fileCostEth =
+                        ethers.formatEther(
+                            uploadCost.winc
                         );
-                    }
 
-                    zipTxId =
-                        zipResult.id;
+                    const treasury =
+                        config.treasuryAddress;
+
+                    const tx =
+                        await signer.sendTransaction(
+                            {
+                                to:
+                                    treasury,
+                                value:
+                                    uploadCost.winc
+                            }
+                        );
+
+                    await tx.wait();
 
                     uploadedZipRef.current = {
-                        txId: zipTxId,
-                        iv,
+                        txId:
+                            null,
+                        iv:
+                            Array.from(
+                                iv
+                            )
+                                .map(
+                                    byte =>
+                                        byte
+                                            .toString(
+                                                16
+                                            )
+                                            .padStart(
+                                                2,
+                                                '0'
+                                            )
+                                )
+                                .join(
+                                    ''
+                                ),
                         merkleRoot
                     };
 
-                    await apiJson(
-                        '/api/save-zip-tx',
-                        {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type':
-                                    'application/json'
-                            },
-                            body:
-                                JSON.stringify({
-                                    jobId,
-                                    zipTxId
-                                })
-                        }
-                    );
-                } else {
-                    /*
-                     * Ja ZIP jau bija augšupielādēts,
-                     * serverim atkārtoti saglabājam to pašu ID.
-                     */
-                    await apiJson(
-                        '/api/save-zip-tx',
-                        {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type':
-                                    'application/json'
-                            },
-                            body:
-                                JSON.stringify({
-                                    jobId,
-                                    zipTxId
-                                })
-                        }
-                    );
-                }
-
-                setStatus(
-                    t('manifest-ready')
-                );
-
-                setLastStatusData({
-                    type: 'simple',
-                    key: 'manifest-ready'
-                });
-
-                let manifest =
-                    uploadedManifestRef.current
-                        .manifest;
-
-                let manifestTxId =
-                    uploadedManifestRef.current
-                        .txId;
-
-                if (!manifestTxId) {
-                    const history = [
-                        ...currentPreviousHistory
-                    ];
-
-                    if (
-                        currentPreviousManifestId
-                    ) {
-                        const alreadyExists =
-                            history.some(
-                                entry =>
-                                    entry &&
-                                    entry.manifestId ===
-                                        currentPreviousManifestId
-                            );
-
-                        if (!alreadyExists) {
-                            history.push({
-                                backupNumber:
-                                    currentPreviousBackupNumber ||
-                                    history.length,
-
-                                manifestId:
-                                    currentPreviousManifestId,
-
-                                url:
-                                    `/raw/${encodeURIComponent(
-                                        currentPreviousManifestId
-                                    )}`
-                            });
-                        }
-                    }
-
-                    history.sort(
-                        (a, b) =>
-                            Number(
-                                b?.backupNumber || 0
-                            ) -
-                            Number(
-                                a?.backupNumber || 0
-                            )
-                    );
-
-                    const encryptionIVs = {
-                        ...currentPreviousEncryptionIVs
-                    };
-
-                    if (
-                        iv &&
-                        iv.length === 12
-                    ) {
-                        encryptionIVs[
-                            zipTxId
-                        ] =
-                            Array.from(iv);
-                    }
-
-                    manifest = {
-                        manifest:
-                            'arweave/paths',
-
-                        version:
-                            '0.2.0',
-
-                        encryption: {
-                            ivs:
-                                encryptionIVs
-                        },
-
-                        archive: {
-                            id:
-                                zipTxId,
-
-                            url:
-                                `/raw/${encodeURIComponent(
-                                    zipTxId
-                                )}`,
-
-                            contains:
-                                changedFiles.map(
-                                    file => ({
-                                        path:
-                                            file.path,
-                                        hash:
-                                            file.hash
-                                    })
-                                )
-                        },
-
-                        paths: {},
-
-                        history
-                    };
-
-                    for (
-                        const file of changedFiles
-                    ) {
-                        manifest.paths[
-                            file.path
-                        ] = {
-                            id:
-                                zipTxId,
-                            hash:
-                                file.hash
-                        };
-                    }
-
-                    for (
-                        const [
-                            filePath,
-                            info
-                        ] of Object.entries(
-                            unchangedFiles
+                    setStatus(
+                        t(
+                            'uploading'
                         )
-                    ) {
-                        manifest.paths[
-                            filePath
-                        ] = {
-                            id:
-                                info.id,
-                            hash:
-                                info.hash
-                        };
-                    }
+                    );
 
-                    const manifestPaths =
-                        Object.keys(
-                            manifest.paths
+                    setLastStatusData(
+                        {
+                            type:
+                                'uploading'
+                        }
+                    );
+
+                    const uploadResult =
+                        await turbo.uploadFile({
+                            fileStreamFactory:
+                                () =>
+                                    ReadableStream.from(
+                                        [
+                                            encryptedBytes
+                                        ]
+                                    ),
+                            dataItemOpts:
+                                {
+                                    tags: [
+                                        {
+                                            name:
+                                                'Content-Type',
+                                            value:
+                                                'application/octet-stream'
+                                        }
+                                    ]
+                                }
+                        });
+
+                    const zipTxId =
+                        uploadResult.id;
+
+                    uploadedZipRef.current.txId =
+                        zipTxId;
+
+                    await apiJson(
+                        '/api/save-zip-tx',
+                        {
+                            method:
+                                'POST',
+                            headers: {
+                                'Content-Type':
+                                    'application/json'
+                            },
+                            body:
+                                JSON.stringify({
+                                    jobId:
+                                        preparedJobId,
+                                    zipTxId
+                                })
+                        }
+                    );
+
+                    const fileMetadata =
+                        changedFilesForUpload.map(
+                            file => ({
+                                path:
+                                    file.path,
+                                hash:
+                                    file.hash,
+                                size:
+                                    file.size
+                            })
                         );
 
-                    if (
-                        manifestPaths.length > 0
+                    const manifestFiles = {
+                        ...unchangedFilesForUpload
+                    };
+
+                    for (
+                        const file of
+                        changedFilesForUpload
                     ) {
-                        manifest.index = {
-                            path:
-                                manifest.paths[
-                                    'README.md'
-                                ]
-                                    ? 'README.md'
-                                    : manifestPaths[0]
+                        manifestFiles[
+                            file.path
+                        ] = {
+                            hash:
+                                file.hash,
+                            size:
+                                file.size,
+                            backupNumber:
+                                Number(
+                                    nftInfo.backupCount ||
+                                    0
+                                ) +
+                                1
                         };
                     }
 
-                    const manifestBlob =
-                        new Blob(
-                            [
-                                JSON.stringify(
-                                    manifest
+                    const manifest = {
+                        version:
+                            1,
+                        repository:
+                            `${githubUser.login}/${repoName}`,
+                        backupNumber:
+                            Number(
+                                nftInfo.backupCount ||
+                                0
+                            ) +
+                            1,
+                        archive: {
+                            id:
+                                zipTxId
+                        },
+                        encryption: {
+                            algorithm:
+                                'AES-256-GCM',
+                            iv:
+                                Array.from(
+                                    iv
                                 )
-                            ],
+                                    .map(
+                                        byte =>
+                                            byte
+                                                .toString(
+                                                    16
+                                                )
+                                                .padStart(
+                                                    2,
+                                                    '0'
+                                                )
+                                    )
+                                    .join(
+                                        ''
+                                    )
+                        },
+                        merkleRoot,
+                        files:
+                            manifestFiles,
+                        changedFiles:
+                            fileMetadata,
+                        history:
+                            currentPreviousHistory,
+                        encryptionIVs: {
+                            ...currentPreviousEncryptionIVs,
+                            [String(
+                                Number(
+                                    nftInfo.backupCount ||
+                                    0
+                                ) +
+                                    1
+                            )]:
+                                Array.from(
+                                    iv
+                                )
+                                    .map(
+                                        byte =>
+                                            byte
+                                                .toString(
+                                                    16
+                                                )
+                                                .padStart(
+                                                    2,
+                                                    '0'
+                                                )
+                                    )
+                                    .join(
+                                        ''
+                                    )
+                        }
+                    };
+
+                    setStatus(
+                        t(
+                            'manifest-ready'
+                        )
+                    );
+
+                    const manifestJson =
+                        JSON.stringify(
+                            manifest
+                        );
+
+                    const manifestBytes =
+                        new TextEncoder().encode(
+                            manifestJson
+                        );
+
+                    const manifestCost =
+                        await turbo.getUploadCosts({
+                            bytes:
+                                manifestBytes.length
+                        });
+
+                    const manifestTx =
+                        await signer.sendTransaction(
                             {
-                                type:
-                                    'application/x.arweave-manifest+json'
+                                to:
+                                    treasury,
+                                value:
+                                    manifestCost.winc
                             }
                         );
 
-                    const manifestResult =
-                        await client.uploadFile({
+                    await manifestTx.wait();
+
+                    const manifestUpload =
+                        await turbo.uploadFile({
                             fileStreamFactory:
                                 () =>
-                                    manifestBlob.stream(),
-
-                            fileSizeFactory:
-                                () =>
-                                    manifestBlob.size,
-
-                            dataItemOpts: {
-                                tags: [
-                                    {
-                                        name:
-                                            'App-Name',
-                                        value:
-                                            'PermRepo'
-                                    },
-                                    {
-                                        name:
-                                            'Type',
-                                        value:
-                                            'path-manifest'
-                                    },
-                                    {
-                                        name:
-                                            'Repo',
-                                        value:
-                                            `${githubUser}/${repoName}`
-                                    },
-                                    {
-                                        name:
-                                            'Content-Type',
-                                        value:
-                                            'application/x.arweave-manifest+json'
-                                    },
-                                    {
-                                        name:
-                                            'Unix-Time',
-                                        value:
-                                            String(
-                                                Math.floor(
-                                                    Date.now() /
-                                                        1000
-                                                )
-                                            )
-                                    }
-                                ]
-                            },
-
-                            chunkByteCount:
-                                5 *
-                                1024 *
-                                1024,
-
-                            maxChunkConcurrency: 3,
-
-                            chunkingMode: 'auto'
+                                    ReadableStream.from(
+                                        [
+                                            manifestBytes
+                                        ]
+                                    ),
+                            dataItemOpts:
+                                {
+                                    tags: [
+                                        {
+                                            name:
+                                                'Content-Type',
+                                            value:
+                                                'application/json'
+                                        }
+                                    ]
+                                }
                         });
 
-                    if (
-                        !isValidManifestId(
-                            manifestResult?.id
-                        )
-                    ) {
-                        throw new Error(
-                            t('invalid-upload-id')
-                        );
-                    }
-
-                    manifestTxId =
-                        manifestResult.id;
+                    const manifestTxId =
+                        manifestUpload.id;
 
                     uploadedManifestRef.current = {
                         txId:
@@ -1765,294 +2533,227 @@ function BackupPage() {
                     await apiJson(
                         '/api/save-manifest-tx',
                         {
-                            method: 'POST',
+                            method:
+                                'POST',
                             headers: {
                                 'Content-Type':
                                     'application/json'
                             },
                             body:
                                 JSON.stringify({
-                                    jobId,
+                                    jobId:
+                                        preparedJobId,
                                     manifestTxId,
                                     manifest
                                 })
                         }
                     );
-                } else {
-                    await apiJson(
-                        '/api/save-manifest-tx',
-                        {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type':
-                                    'application/json'
+
+                    const signerAddress =
+                        await signer.getAddress();
+
+                    const nftContract =
+                        new ethers.Contract(
+                            config.nftAddress,
+                            NFT_ABI,
+                            signer
+                        );
+
+                    const nonce =
+                        await nftContract.getNonce(
+                            nftInfo.tokenId
+                        );
+
+                    const deadline =
+                        Math.floor(
+                            Date.now() /
+                                1000
+                        ) +
+                        15 *
+                            60;
+
+                    const domain = {
+                        name:
+                            'PermRepoNFT',
+                        version:
+                            '1',
+                        chainId:
+                            Number(
+                                config.chainId
+                            ),
+                        verifyingContract:
+                            config.nftAddress
+                    };
+
+                    const types = {
+                        Backup: [
+                            {
+                                name:
+                                    'tokenId',
+                                type:
+                                    'uint256'
                             },
-                            body:
-                                JSON.stringify({
-                                    jobId,
-                                    manifestTxId,
-                                    manifest
-                                })
-                        }
-                    );
-                }
+                            {
+                                name:
+                                    'manifestHash',
+                                type:
+                                    'bytes32'
+                            },
+                            {
+                                name:
+                                    'merkleRoot',
+                                type:
+                                    'bytes32'
+                            },
+                            {
+                                name:
+                                    'manifestURI',
+                                type:
+                                    'string'
+                            },
+                            {
+                                name:
+                                    'nonce',
+                                type:
+                                    'uint256'
+                            },
+                            {
+                                name:
+                                    'deadline',
+                                type:
+                                    'uint256'
+                            }
+                        ]
+                    };
 
-                setStatus(
-                    t('signing')
-                );
+                    const manifestHash =
+                        ethers.keccak256(
+                            ethers.toUtf8Bytes(
+                                manifestJson
+                            )
+                        );
 
-                setLastStatusData({
-                    type: 'simple',
-                    key: 'signing'
-                });
+                    const value = {
+                        tokenId:
+                            nftInfo.tokenId,
+                        manifestHash,
+                        merkleRoot,
+                        manifestURI:
+                            `ar://${manifestTxId}`,
+                        nonce,
+                        deadline
+                    };
 
-                const provider =
-                    new ethers.BrowserProvider(
-                        window.ethereum
-                    );
+                    const signature =
+                        await signer.signTypedData(
+                            domain,
+                            types,
+                            value
+                        );
 
-                const accounts =
-                    await provider.send(
-                        'eth_accounts',
-                        []
-                    );
+                    const backupTx =
+                        await nftContract.addBackup(
+                            nftInfo.tokenId,
+                            manifestHash,
+                            merkleRoot,
+                            `ar://${manifestTxId}`,
+                            deadline,
+                            signature
+                        );
 
-                if (
-                    !accounts[0] ||
-                    accounts[0].toLowerCase() !==
-                        userAddress.toLowerCase()
-                ) {
-                    throw new Error(
-                        t('wallet-changed')
-                    );
-                }
+                    await backupTx.wait();
 
-                const currentSigner =
-                    await provider.getSigner();
-
-                const readContract =
-                    new ethers.Contract(
-                        config.nftAddress,
-                        NFT_ABI,
-                        provider
-                    );
-
-                const tokenId =
-                    BigInt(nftInfo.tokenId);
-
-                const owner =
-                    await readContract.ownerOf(
-                        tokenId
-                    );
-
-                if (
-                    owner.toLowerCase() !==
-                    userAddress.toLowerCase()
-                ) {
-                    throw new Error(
-                        t('nft-not-owned')
-                    );
-                }
-
-                const deadline =
-                    Math.floor(
-                        Date.now() / 1000
-                    ) + 600;
-
-                const currentNonce =
-                    await readContract.getNonce(
-                        tokenId
+                    setLastManifestTxId(
+                        manifestTxId
                     );
 
-                const onChainBackupCount =
-                    await readContract.getBackupCount(
-                        tokenId
+                    setBackupCompleted(
+                        true
                     );
 
-                const manifestURI =
-                    `ar://${manifestTxId}`;
-
-                const manifestHash =
-                    ethers.keccak256(
-                        ethers.toUtf8Bytes(
-                            manifestURI
+                    setStatus(
+                        t(
+                            'backup-complete'
                         )
                     );
 
-                const domain = {
-                    name: 'PermRepo',
-                    version: '1',
-                    chainId:
-                        Number(
-                            config.chainId
-                        ),
-                    verifyingContract:
-                        config.nftAddress
-                };
-
-                const types = {
-                    AddBackup: [
+                    setLastStatusData(
                         {
-                            name:
-                                'tokenId',
                             type:
-                                'uint256'
-                        },
-                        {
-                            name:
-                                'backupNumber',
-                            type:
-                                'uint256'
-                        },
-                        {
-                            name:
-                                'manifestHash',
-                            type:
-                                'bytes32'
-                        },
-                        {
-                            name:
-                                'merkleRoot',
-                            type:
-                                'bytes32'
-                        },
-                        {
-                            name:
-                                'deadline',
-                            type:
-                                'uint256'
-                        },
-                        {
-                            name:
-                                'nonce',
-                            type:
-                                'uint256'
+                                'success',
+                            key:
+                                'backup-complete'
                         }
-                    ]
-                };
-
-                const value = {
-                    tokenId,
-
-                    backupNumber:
-                        onChainBackupCount +
-                        1n,
-
-                    manifestHash,
-
-                    merkleRoot,
-
-                    deadline:
-                        BigInt(
-                            deadline
-                        ),
-
-                    nonce:
-                        currentNonce
-                };
-
-                const signature =
-                    await currentSigner.signTypedData(
-                        domain,
-                        types,
-                        value
                     );
-
-                const nftWrite =
-                    new ethers.Contract(
-                        config.nftAddress,
-                        NFT_ABI,
-                        currentSigner
-                    );
-
-                const tx =
-                    await nftWrite.addBackup(
-                        tokenId,
-                        manifestHash,
-                        merkleRoot,
-                        manifestURI,
-                        BigInt(deadline),
-                        signature
-                    );
-
-                await tx.wait();
-
-                setNftInfo({
-                    tokenId:
-                        nftInfo.tokenId,
-
-                    backupCount:
-                        (
-                            onChainBackupCount +
-                            1n
-                        ).toString(),
-
-                    lastManifest:
-                        manifestURI,
-
-                    lastMerkleRoot:
-                        merkleRoot
-                });
-
-                setLastManifestTxId(
-                    manifestTxId
-                );
-
-                setBackupCompleted(
-                    true
-                );
-
-                setStatus(
-                    t('backup-complete')
-                );
-
-                setLastStatusData({
-                    type: 'success',
-                    key:
-                        'backup-complete'
-                });
-            } catch (e) {
-                if (
-                    e.code ===
-                        'ACTION_REJECTED' ||
-                    e.code === 4001
+                } catch (
+                    e
                 ) {
+                    const message =
+                        getSafeErrorMessage(
+                            e
+                        );
+
                     setError(
-                        t('transaction-cancelled')
+                        message
                     );
-                } else {
-                    setError(
-                        getSafeErrorMessage(e)
+
+                    if (
+                        /user rejected|user denied|rejected|denied/i.test(
+                            message
+                        )
+                    ) {
+                        setStatus(
+                            t(
+                                'transaction-cancelled'
+                            )
+                        );
+
+                        setLastStatusData(
+                            {
+                                type:
+                                    'simple',
+                                key:
+                                    'transaction-cancelled'
+                            }
+                        );
+                    }
+                } finally {
+                    setIsWorking(
+                        false
                     );
                 }
-            } finally {
-                setIsWorking(false);
-            }
-        },
-        [
-            apiJson,
-            t,
-            githubUser,
-            repoName,
-            config,
-            currentPreviousHistory,
-            currentPreviousManifestId,
-            currentPreviousBackupNumber,
-            currentPreviousEncryptionIVs,
-            nftInfo.tokenId,
-            calculateMerkleRoot,
-            encryptData,
-            userAddress
-        ]
-    );
+            },
+            [
+                config,
+                userAddress,
+                t,
+                changedFilesForUpload,
+                generateMasterKey,
+                showMasterKeyModal,
+                encryptData,
+                calculateMerkleRoot,
+                repoName,
+                githubUser,
+                unchangedFilesForUpload,
+                nftInfo,
+                currentPreviousHistory,
+                currentPreviousEncryptionIVs,
+                preparedJobId,
+                apiJson
+            ]
+        );
 
-    if (!config) {
+    if (
+        !config
+    ) {
         return (
             <div className="container">
                 <div
                     style={{
-                        textAlign: 'center',
-                        padding: '20px'
+                        textAlign:
+                            'center',
+                        padding:
+                            '20px'
                     }}
                 >
                     <div className="spinner"></div>
@@ -2074,12 +2775,15 @@ function BackupPage() {
             <div className="language-selector">
                 <button
                     className={`lang-btn ${
-                        currentLanguage === 'lv'
+                        currentLanguage ===
+                        'lv'
                             ? 'active'
                             : ''
                     }`}
                     onClick={() =>
-                        switchLanguage('lv')
+                        switchLanguage(
+                            'lv'
+                        )
                     }
                 >
                     LV
@@ -2087,12 +2791,15 @@ function BackupPage() {
 
                 <button
                     className={`lang-btn ${
-                        currentLanguage === 'en'
+                        currentLanguage ===
+                        'en'
                             ? 'active'
                             : ''
                     }`}
                     onClick={() =>
-                        switchLanguage('en')
+                        switchLanguage(
+                            'en'
+                        )
                     }
                 >
                     EN
@@ -2100,12 +2807,15 @@ function BackupPage() {
 
                 <button
                     className={`lang-btn ${
-                        currentLanguage === 'eo'
+                        currentLanguage ===
+                        'eo'
                             ? 'active'
                             : ''
                     }`}
                     onClick={() =>
-                        switchLanguage('eo')
+                        switchLanguage(
+                            'eo'
+                        )
                     }
                 >
                     EO
@@ -2119,55 +2829,73 @@ function BackupPage() {
             />
 
             <p className="subtitle">
-                {t('repo-label')}:{' '}
-                {repoName || '-'}
+                {t(
+                    'repo-label'
+                )}
+                :{' '}
+                {repoName ||
+                    '-'}
             </p>
 
             <div className="info-row text-left">
                 <span className="info-label">
-                    {t('nft-token')}
+                    {t(
+                        'nft-token'
+                    )}
                 </span>
 
                 <span className="info-value">
-                    {nftInfo.tokenId || '-'}
+                    {nftInfo.tokenId ||
+                        '-'}
                 </span>
             </div>
 
             <div className="info-row text-left">
                 <span className="info-label">
-                    {t('backup-count')}
+                    {t(
+                        'backup-count'
+                    )}
                 </span>
 
                 <span className="info-value">
-                    {nftInfo.backupCount || '-'}
+                    {nftInfo.backupCount ||
+                        '-'}
                 </span>
             </div>
 
             <div className="info-row text-left">
                 <span className="info-label">
-                    {t('last-manifest')}
+                    {t(
+                        'last-manifest'
+                    )}
                 </span>
 
                 <span className="info-value">
-                    {nftInfo.lastManifest || '-'}
+                    {nftInfo.lastManifest ||
+                        '-'}
                 </span>
             </div>
 
             <div className="info-row text-left">
                 <span className="info-label">
-                    {t('last-merkle')}
+                    {t(
+                        'last-merkle'
+                    )}
                 </span>
 
                 <span className="info-value">
-                    {nftInfo.lastMerkleRoot || '-'}
+                    {nftInfo.lastMerkleRoot ||
+                        '-'}
                 </span>
             </div>
 
             {fileInfo.loading ? (
                 <div
                     style={{
-                        textAlign: 'center',
-                        padding: '20px'
+                        textAlign:
+                            'center',
+                        padding:
+                            '20px'
                     }}
                 >
                     <div className="spinner"></div>
@@ -2176,31 +2904,43 @@ function BackupPage() {
                 <>
                     <div
                         style={{
-                            padding: '8px 0',
+                            padding:
+                                '8px 0',
                             borderBottom:
                                 '1px solid rgba(255,255,255,0.08)'
                         }}
                     >
                         <Icon name="fails" />
                         {' '}
-                        {t('files-count')}:{' '}
+                        {t(
+                            'files-count'
+                        )}
+                        :{' '}
                         <strong>
-                            {fileInfo.count}
+                            {
+                                fileInfo.count
+                            }
                         </strong>
                     </div>
 
                     <div
                         style={{
-                            padding: '8px 0',
+                            padding:
+                                '8px 0',
                             borderBottom:
                                 '1px solid rgba(255,255,255,0.08)'
                         }}
                     >
                         <Icon name="fails" />
                         {' '}
-                        {t('files-size')}:{' '}
+                        {t(
+                            'files-size'
+                        )}
+                        :{' '}
                         <strong>
-                            {fileInfo.sizeText}
+                            {
+                                fileInfo.sizeText
+                            }
                         </strong>
                     </div>
                 </>
@@ -2208,40 +2948,52 @@ function BackupPage() {
 
             {!backupCompleted ? (
                 <button
-                    onClick={continueBackup}
+                    onClick={
+                        continueBackup
+                    }
                     disabled={
                         isWorking ||
                         fileInfo.loading ||
-                        fileInfo.count === 0
+                        fileInfo.count ===
+                            0
                     }
                     className="sign-button"
                     style={{
-                        marginTop: '20px'
+                        marginTop:
+                            '20px'
                     }}
                 >
                     {isWorking ? (
                         <div
                             style={{
-                                textAlign: 'center'
+                                textAlign:
+                                    'center'
                             }}
                         >
                             <div className="spinner"></div>
                         </div>
                     ) : (
-                        t('continue-backup')
+                        t(
+                            'continue-backup'
+                        )
                     )}
                 </button>
             ) : (
                 <button
                     onClick={() =>
-                        navigate('/')
+                        navigate(
+                            '/'
+                        )
                     }
                     className="sign-button"
                     style={{
-                        marginTop: '20px'
+                        marginTop:
+                            '20px'
                     }}
                 >
-                    {t('back-home')}
+                    {t(
+                        'back-home'
+                    )}
                 </button>
             )}
 
@@ -2249,12 +3001,14 @@ function BackupPage() {
                 <div
                     className="status-card"
                     style={{
-                        display: 'block'
+                        display:
+                            'block'
                     }}
                 >
                     <div
                         style={{
-                            whiteSpace: 'pre-wrap'
+                            whiteSpace:
+                                'pre-wrap'
                         }}
                     >
                         <Icon
@@ -2274,7 +3028,8 @@ function BackupPage() {
                         lastManifestTxId && (
                             <div
                                 style={{
-                                    marginTop: '12px'
+                                    marginTop:
+                                        '12px'
                                 }}
                             >
                                 <Icon name="manifests" />
