@@ -50,7 +50,31 @@ const MAX_REPO_FILES = Number(process.env.MAX_REPO_FILES || 5000);
 const MAX_REPO_BYTES = Number(process.env.MAX_REPO_BYTES || 524288000);
 const MAX_FILE_BYTES = Number(process.env.MAX_FILE_BYTES || 104857600);
 const MAX_ZIP_BYTES = Number(process.env.MAX_ZIP_BYTES || 629145600);
-const MAX_CONCURRENT_BACKUPS = Number(process.env.MAX_CONCURRENT_BACKUPS || 30);
+
+const BACKUP_MEMORY_BUDGET_BYTES = Number(
+    process.env.BACKUP_MEMORY_BUDGET_BYTES ||
+    5368709120
+);
+
+const BACKUP_MEMORY_HARD_LIMIT_BYTES = Number(
+    process.env.BACKUP_MEMORY_HARD_LIMIT_BYTES ||
+    6979321856
+);
+
+const BACKUP_MEMORY_BASE_BYTES = Number(
+    process.env.BACKUP_MEMORY_BASE_BYTES ||
+    33554432
+);
+
+const BACKUP_MEMORY_PER_FILE_MULTIPLIER = Number(
+    process.env.BACKUP_MEMORY_PER_FILE_MULTIPLIER ||
+    4.5
+);
+
+const BACKUP_QUEUE_POLL_MS = Number(
+    process.env.BACKUP_QUEUE_POLL_MS ||
+    1000
+);
 
 const JOB_TTL_SECONDS = Number(process.env.JOB_TTL_SECONDS || 3600);
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 3600);
@@ -59,6 +83,10 @@ const MAX_GITHUB_REPO_PAGES = 10;
 const MAX_MANIFEST_BYTES = 10 * 1024 * 1024;
 
 let activeBackups = 0;
+let reservedBackupMemoryBytes = 0;
+let backupSchedulerRunning = false;
+let backupSchedulerTimer = null;
+const backupQueue = [];
 
 if (!CHAIN_ID) {
     console.error('❌ CHAIN_ID nav iestatīts!');
@@ -100,10 +128,43 @@ if (!Number.isSafeInteger(MAX_ZIP_BYTES) || MAX_ZIP_BYTES <= 0) {
 }
 
 if (
-    !Number.isSafeInteger(MAX_CONCURRENT_BACKUPS) ||
-    MAX_CONCURRENT_BACKUPS <= 0
+    !Number.isSafeInteger(BACKUP_MEMORY_BUDGET_BYTES) ||
+    BACKUP_MEMORY_BUDGET_BYTES <= 0
 ) {
-    console.error('❌ MAX_CONCURRENT_BACKUPS ir nederīgs!');
+    console.error('❌ BACKUP_MEMORY_BUDGET_BYTES ir nederīgs!');
+    process.exit(1);
+}
+
+if (
+    !Number.isSafeInteger(BACKUP_MEMORY_HARD_LIMIT_BYTES) ||
+    BACKUP_MEMORY_HARD_LIMIT_BYTES <=
+        BACKUP_MEMORY_BUDGET_BYTES
+) {
+    console.error('❌ BACKUP_MEMORY_HARD_LIMIT_BYTES ir nederīgs!');
+    process.exit(1);
+}
+
+if (
+    !Number.isSafeInteger(BACKUP_MEMORY_BASE_BYTES) ||
+    BACKUP_MEMORY_BASE_BYTES <= 0
+) {
+    console.error('❌ BACKUP_MEMORY_BASE_BYTES ir nederīgs!');
+    process.exit(1);
+}
+
+if (
+    !Number.isFinite(BACKUP_MEMORY_PER_FILE_MULTIPLIER) ||
+    BACKUP_MEMORY_PER_FILE_MULTIPLIER <= 1
+) {
+    console.error('❌ BACKUP_MEMORY_PER_FILE_MULTIPLIER ir nederīgs!');
+    process.exit(1);
+}
+
+if (
+    !Number.isSafeInteger(BACKUP_QUEUE_POLL_MS) ||
+    BACKUP_QUEUE_POLL_MS < 100
+) {
+    console.error('❌ BACKUP_QUEUE_POLL_MS ir nederīgs!');
     process.exit(1);
 }
 
@@ -189,6 +250,212 @@ function repositoryHash(fullRepoName) {
     );
 }
 
+function estimateBackupMemoryBytes(largestFileBytes) {
+    const fileBytes = Math.max(
+        0,
+        Number(largestFileBytes) || 0
+    );
+
+    const estimate =
+        BACKUP_MEMORY_BASE_BYTES +
+        Math.ceil(
+            fileBytes *
+            BACKUP_MEMORY_PER_FILE_MULTIPLIER
+        );
+
+    return Math.max(
+        BACKUP_MEMORY_BASE_BYTES,
+        estimate
+    );
+}
+
+function getLargestTreeFileBytes(blobs) {
+    let largest = 0;
+
+    for (const blob of blobs) {
+        if (!Number.isSafeInteger(blob.size) || blob.size < 0) {
+            throw new Error(
+                `Git Tree satur nederīgu faila izmēru: ${blob.path}`
+            );
+        }
+
+        if (blob.size > MAX_FILE_BYTES) {
+            throw new Error(
+                `Fails ${blob.path} pārsniedz ${MAX_FILE_BYTES} bytes limitu.`
+            );
+        }
+
+        if (blob.size > largest) {
+            largest = blob.size;
+        }
+    }
+
+    return largest;
+}
+
+function getBackupMemoryState() {
+    const rss = process.memoryUsage().rss;
+
+    return {
+        rssBytes: rss,
+        reservedBytes: reservedBackupMemoryBytes,
+        availableReservationBytes: Math.max(
+            0,
+            BACKUP_MEMORY_BUDGET_BYTES -
+                reservedBackupMemoryBytes
+        ),
+        budgetBytes: BACKUP_MEMORY_BUDGET_BYTES,
+        hardLimitBytes: BACKUP_MEMORY_HARD_LIMIT_BYTES
+    };
+}
+
+function canReserveBackupMemory(requiredBytes) {
+    const memory = getBackupMemoryState();
+
+    return (
+        memory.rssBytes <
+            BACKUP_MEMORY_HARD_LIMIT_BYTES &&
+        memory.reservedBytes + requiredBytes <=
+            BACKUP_MEMORY_BUDGET_BYTES
+    );
+}
+
+function removeQueuedBackup(task) {
+    const index = backupQueue.indexOf(task);
+
+    if (index !== -1) {
+        backupQueue.splice(index, 1);
+        return true;
+    }
+
+    return false;
+}
+
+function scheduleBackupPump() {
+    if (backupSchedulerTimer !== null) {
+        return;
+    }
+
+    backupSchedulerTimer = setTimeout(() => {
+        backupSchedulerTimer = null;
+
+        pumpBackupQueue().catch(error => {
+            console.error(
+                '❌ Backup scheduler kļūda:',
+                error
+            );
+        });
+    }, BACKUP_QUEUE_POLL_MS);
+}
+
+async function pumpBackupQueue() {
+    if (backupSchedulerRunning) {
+        return;
+    }
+
+    backupSchedulerRunning = true;
+
+    try {
+        let started = true;
+
+        while (started) {
+            started = false;
+
+            const currentRss =
+                process.memoryUsage().rss;
+
+            if (
+                currentRss >=
+                BACKUP_MEMORY_HARD_LIMIT_BYTES
+            ) {
+                break;
+            }
+
+            for (
+                let index = 0;
+                index < backupQueue.length;
+                index += 1
+            ) {
+                const task =
+                    backupQueue[index];
+
+                if (task.cancelled) {
+                    backupQueue.splice(
+                        index,
+                        1
+                    );
+
+                    index -= 1;
+                    continue;
+                }
+
+                if (
+                    !canReserveBackupMemory(
+                        task.memoryReservationBytes
+                    )
+                ) {
+                    continue;
+                }
+
+                backupQueue.splice(
+                    index,
+                    1
+                );
+
+                reservedBackupMemoryBytes +=
+                    task.memoryReservationBytes;
+
+                activeBackups += 1;
+
+                task.started = true;
+                task.queuePosition = 0;
+
+                started = true;
+
+                Promise.resolve()
+                    .then(task.run)
+                    .then(task.resolve)
+                    .catch(task.reject)
+                    .finally(() => {
+                        reservedBackupMemoryBytes =
+                            Math.max(
+                                0,
+                                reservedBackupMemoryBytes -
+                                    task.memoryReservationBytes
+                            );
+
+                        activeBackups =
+                            Math.max(
+                                0,
+                                activeBackups - 1
+                            );
+
+                        scheduleBackupPump();
+                    });
+
+                break;
+            }
+        }
+    } finally {
+        backupSchedulerRunning = false;
+
+        if (backupQueue.length > 0) {
+            scheduleBackupPump();
+        }
+    }
+}
+
+setInterval(() => {
+    if (backupQueue.length > 0) {
+        pumpBackupQueue().catch(error => {
+            console.error(
+                '❌ Backup scheduler kļūda:',
+                error
+            );
+        });
+    }
+}, BACKUP_QUEUE_POLL_MS).unref();
+
 function calculateGitBlobSha(buffer) {
     const header = `blob ${buffer.length}\0`;
 
@@ -228,368 +495,221 @@ const SUBSCRIPTION_ABI = [
 function getAllowedConnectOrigins() {
     const origins = new Set([
         'https://api.github.com',
-        'https://github.com',
-        'https://arweave.net',
-        'https://ar-io.dev',
-        'https://gateway.arweave.net',
-        'https://sepolia.base.org',
-        'https://base-sepolia-rpc.publicnode.com',
-        'https://upload.services.ar-io.dev',
-        'https://payment.services.ar-io.dev'
+        'https://github.com'
     ]);
 
-    for (const value of [
-        ARWEAVE_GATEWAY,
-        RPC_URL,
-        TURBO_UPLOAD_URL,
-        TURBO_PAYMENT_URL
-    ]) {
+    if (GITHUB_REDIRECT_URI) {
         try {
-            if (value) {
-                origins.add(new URL(value).origin);
-            }
+            origins.add(
+                new URL(
+                    GITHUB_REDIRECT_URI
+                ).origin
+            );
         } catch {
-            // Invalid optional public config is reported by /api/config consumers.
+            // Nederīgs redirect URI tiks noraidīts OAuth konfigurācijas laikā.
         }
     }
 
-    return [...origins].join(' ');
+    return origins;
 }
 
-async function withJobLock(jobId, fn) {
-    const token = await acquireJobLock(jobId);
+function assertSameOrigin(req) {
+    const origin =
+        req.get('origin');
 
-    if (!token) {
-        throw new Error('Job jau tiek apstrādāts.');
+    const host =
+        req.get('host');
+
+    if (!origin) {
+        return;
     }
+
+    let originUrl;
 
     try {
-        return await fn();
-    } finally {
-        await releaseJobLock(jobId, token);
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Redis-backed express-session store.
-// -----------------------------------------------------------------------------
-
-class UpstashSessionStore extends session.Store {
-    constructor(redisClient, ttlSeconds) {
-        super();
-        this.redis = redisClient;
-        this.ttlSeconds = ttlSeconds;
+        originUrl =
+            new URL(origin);
+    } catch {
+        throw new Error(
+            'Nederīgs Origin.'
+        );
     }
 
-    key(sid) {
-        return `permrepo:session:${sid}`;
+    const expectedOrigins =
+        getAllowedConnectOrigins();
+
+    const requestOrigin =
+        `${req.protocol}://${host}`;
+
+    if (
+        originUrl.origin !==
+            requestOrigin &&
+        !expectedOrigins.has(
+            originUrl.origin
+        )
+    ) {
+        throw new Error(
+            'Origin nav atļauts.'
+        );
     }
-
-    get(sid, callback) {
-        this.redis
-            .get(this.key(sid))
-            .then(value => {
-                if (!value) {
-                    return callback(null, null);
-                }
-
-                if (typeof value === 'object') {
-                    return callback(null, value);
-                }
-
-                return callback(
-                    null,
-                    JSON.parse(String(value))
-                );
-            })
-            .catch(error => callback(error));
-    }
-
-    set(sid, sess, callback = () => {}) {
-        this.redis
-            .set(
-                this.key(sid),
-                JSON.stringify(sess),
-                { ex: this.ttlSeconds }
-            )
-            .then(() => callback(null))
-            .catch(error => callback(error));
-    }
-
-    destroy(sid, callback = () => {}) {
-        this.redis
-            .del(this.key(sid))
-            .then(() => callback(null))
-            .catch(error => callback(error));
-    }
-
-    touch(sid, sess, callback = () => {}) {
-        this.redis
-            .expire(
-                this.key(sid),
-                this.ttlSeconds
-            )
-            .then(() => callback(null))
-            .catch(error => callback(error));
-    }
-}
-
-const redisClient = getRedis();
-
-if (!redisClient) {
-    console.error('❌ Redis ir obligāts PermRepo serverim.');
-    process.exit(1);
 }
 
 app.use(
     express.json({
-        limit: '10mb'
+        limit: '2mb'
     })
 );
 
 app.use(
     express.urlencoded({
-        extended: true,
-        limit: '2mb'
+        extended: false,
+        limit: '100kb'
     })
 );
 
-app.use((req, res, next) => {
-    const connectOrigins =
-        getAllowedConnectOrigins();
-
-    res.setHeader(
-        'Content-Security-Policy',
-        `default-src 'self'; ` +
-        `script-src 'self' 'wasm-unsafe-eval'; ` +
-        `style-src 'self' 'unsafe-inline'; ` +
-        `img-src 'self' data: blob:; ` +
-        `font-src 'self'; ` +
-        `connect-src 'self' ${connectOrigins}; ` +
-        `form-action 'self' https://github.com; ` +
-        `frame-ancestors 'none'; ` +
-        `object-src 'none'; ` +
-        `base-uri 'self';`
-    );
-
-    res.setHeader(
-        'Strict-Transport-Security',
-        'max-age=31536000; includeSubDomains'
-    );
-
-    res.setHeader(
-        'X-Content-Type-Options',
-        'nosniff'
-    );
-
-    res.setHeader(
-        'X-Frame-Options',
-        'DENY'
-    );
-
-    res.setHeader(
-        'Referrer-Policy',
-        'strict-origin-when-cross-origin'
-    );
-
-    res.setHeader(
-        'Permissions-Policy',
-        'camera=(), microphone=(), geolocation=()'
-    );
-
-    next();
-});
-
 app.use(
     express.static(
-        path.join(__dirname, 'dist')
-    )
-);
-
-app.use(
-    express.static(
-        path.join(__dirname, 'public')
-    )
-);
-
-app.use(
-    session({
-        store: new UpstashSessionStore(
-            redisClient,
-            SESSION_TTL_SECONDS
+        path.join(
+            __dirname,
+            'dist'
         ),
-        secret: SESSION_SECRET,
-        resave: false,
-        saveUninitialized: false,
-        proxy: true,
-        cookie: {
-            secure: true,
-            httpOnly: true,
-            sameSite: 'lax',
-            maxAge:
-                SESSION_TTL_SECONDS * 1000
+        {
+            index: false
         }
-    })
+    )
 );
 
-const githubApiLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 30,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: {
-        success: false,
-        error:
-            'Pārāk daudz GitHub operāciju — mēģini vēlāk.'
-    },
-    keyGenerator: req =>
-        req.session.githubUser || req.ip
-});
-
-const backupLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: {
-        success: false,
-        error:
-            'Pārāk daudz backup operāciju — mēģini vēlāk.'
-    },
-    keyGenerator: req =>
-        req.session.githubUser || req.ip
-});
-
-class GitHubRateLimiter {
-    constructor() {
-        this.lastRequestTime = 0;
-        this.minInterval = 100;
-    }
-
-    async makeRequest(url, options) {
-        const now = Date.now();
-        const timeSinceLast =
-            now - this.lastRequestTime;
-
-        if (timeSinceLast < this.minInterval) {
-            await new Promise(resolve =>
-                setTimeout(
-                    resolve,
-                    this.minInterval -
-                        timeSinceLast
-                )
-            );
+const sessionMiddleware =
+    session({
+        secret:
+            SESSION_SECRET,
+        resave:
+            false,
+        saveUninitialized:
+            false,
+        cookie: {
+            httpOnly:
+                true,
+            secure:
+                process.env.NODE_ENV ===
+                'production',
+            sameSite:
+                'lax',
+            maxAge:
+                SESSION_TTL_SECONDS *
+                1000
         }
+    });
 
-        this.lastRequestTime = Date.now();
+app.use(
+    sessionMiddleware
+);
 
-        return fetch(url, options);
+const backupLimiter =
+    rateLimit({
+        windowMs:
+            15 * 60 * 1000,
+        max:
+            30,
+        standardHeaders:
+            true,
+        legacyHeaders:
+            false,
+        message: {
+            success:
+                false,
+            error:
+                'Pārāk daudz pieprasījumu. Lūdzu, mēģiniet vēlāk.'
+        }
+    });
+
+const apiLimiter =
+    rateLimit({
+        windowMs:
+            15 * 60 * 1000,
+        max:
+            120,
+        standardHeaders:
+            true,
+        legacyHeaders:
+            false
+    });
+
+async function githubRequest(
+    url,
+    options = {}
+) {
+    const response =
+        await fetch(
+            url,
+            {
+                ...options,
+                headers: {
+                    Accept:
+                        'application/vnd.github+json',
+                    'X-GitHub-Api-Version':
+                        '2022-11-28',
+                    ...(options.headers || {})
+                }
+            }
+        );
+
+    if (!response.ok) {
+        const text =
+            await response.text();
+
+        throw new Error(
+            `GitHub API kļūda ${response.status}: ` +
+            text.substring(0, 300)
+        );
     }
-}
 
-const githubRateLimiterInstance =
-    new GitHubRateLimiter();
+    return response;
+}
 
 async function fetchWithRetry(
     url,
-    options,
-    retries = 3
+    options = {},
+    attempts = 3
 ) {
-    let lastStatus = null;
+    let lastError = null;
 
     for (
-        let attempt = 0;
-        attempt < retries;
-        attempt++
+        let attempt = 1;
+        attempt <= attempts;
+        attempt += 1
     ) {
-        const response =
-            await githubRateLimiterInstance.makeRequest(
+        try {
+            return await githubRequest(
                 url,
                 options
             );
+        } catch (error) {
+            lastError =
+                error;
 
-        lastStatus = response.status;
+            if (
+                attempt >=
+                attempts
+            ) {
+                break;
+            }
 
-        if (response.status === 401) {
-            throw new Error(
-                'GitHub autorizācija ir beigusies.'
-            );
-        }
-
-        if (
-            response.status === 403 ||
-            response.status === 429
-        ) {
-            const retryAfterHeader =
-                response.headers.get(
-                    'retry-after'
-                );
-
-            const retryAfter =
-                retryAfterHeader
-                    ? Number(
-                        retryAfterHeader
-                    ) * 1000
-                    : 0;
-
-            const backoff =
-                retryAfter > 0
-                    ? retryAfter
-                    : Math.pow(
-                        2,
-                        attempt
-                    ) * 1000;
-
-            if (attempt < retries - 1) {
-                await new Promise(resolve =>
+            await new Promise(
+                resolve =>
                     setTimeout(
                         resolve,
-                        Math.min(
-                            backoff,
-                            30000
-                        )
+                        500 *
+                            attempt
                     )
-                );
-
-                continue;
-            }
-        }
-
-        if (!response.ok) {
-            throw new Error(
-                `GitHub API kļūda: ${response.status}`
             );
         }
-
-        return response;
     }
 
-    throw new Error(
-        `GitHub API pieprasījums neizdevās (${lastStatus || 'nezināms statuss'}).`
-    );
-}
-
-function createOAuthState() {
-    return crypto
-        .randomBytes(32)
-        .toString('hex');
-}
-
-function requireGithubSession(req, res) {
-    if (
-        !req.session.githubToken ||
-        !req.session.githubUser
-    ) {
-        res.status(401).json({
-            success: false,
-            error:
-                'Nav GitHub autorizācijas'
-        });
-
-        return false;
-    }
-
-    return true;
+    throw lastError ||
+        new Error(
+            'Pieprasījums neizdevās.'
+        );
 }
 
 async function getGitHubRepository(
@@ -599,78 +719,40 @@ async function getGitHubRepository(
 ) {
     const response =
         await fetchWithRetry(
-            `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+            `https://api.github.com/repos/` +
+            `${encodeURIComponent(owner)}/` +
+            `${encodeURIComponent(repo)}`,
             {
                 headers: {
                     Authorization:
-                        `Bearer ${githubToken}`,
-                    Accept:
-                        'application/vnd.github+json',
-                    'X-GitHub-Api-Version':
-                        '2022-11-28'
+                        `Bearer ${githubToken}`
                 }
             }
         );
 
-    const data =
+    const repository =
         await response.json();
 
     if (
-        !data ||
-        typeof data !== 'object'
+        !repository ||
+        typeof repository.id !==
+            'number'
     ) {
         throw new Error(
-            'GitHub repo dati nav derīgi.'
-        );
-    }
-
-    if (data.archived) {
-        throw new Error(
-            'Arhivēts GitHub repozitorijs nav pieejams backupam.'
-        );
-    }
-
-    if (
-        typeof data.id !== 'number' ||
-        !Number.isSafeInteger(data.id)
-    ) {
-        throw new Error(
-            'GitHub repo ID nav derīgs.'
-        );
-    }
-
-    if (
-        typeof data.default_branch !==
-            'string' ||
-        !data.default_branch
-    ) {
-        throw new Error(
-            'GitHub default branch nav atrasts.'
-        );
-    }
-
-    const canonicalOwner =
-        data.owner?.login;
-
-    const fullName =
-        data.full_name;
-
-    if (
-        canonicalOwner !== owner ||
-        fullName !==
-            `${owner}/${repo}`
-    ) {
-        throw new Error(
-            'GitHub repozitorija identitāte nesakrīt ar autorizēto lietotāju.'
+            'GitHub neatgrieza derīgu repozitoriju.'
         );
     }
 
     return {
-        id: data.id,
-        fullName,
+        id:
+            repository.id,
         defaultBranch:
-            data.default_branch,
-        private: Boolean(data.private)
+            repository.default_branch ||
+            'main',
+        private:
+            Boolean(
+                repository.private
+            )
     };
 }
 
@@ -680,24 +762,16 @@ async function getBranchCommitSha(
     repo,
     branch
 ) {
-    const url =
-        `https://api.github.com/repos/` +
-        `${encodeURIComponent(owner)}/` +
-        `${encodeURIComponent(repo)}/` +
-        `git/ref/heads/` +
-        `${encodeURIComponent(branch)}`;
-
     const response =
         await fetchWithRetry(
-            url,
+            `https://api.github.com/repos/` +
+            `${encodeURIComponent(owner)}/` +
+            `${encodeURIComponent(repo)}/commits/` +
+            `${encodeURIComponent(branch)}`,
             {
                 headers: {
                     Authorization:
-                        `Bearer ${githubToken}`,
-                    Accept:
-                        'application/vnd.github+json',
-                    'X-GitHub-Api-Version':
-                        '2022-11-28'
+                        `Bearer ${githubToken}`
                 }
             }
         );
@@ -705,49 +779,37 @@ async function getBranchCommitSha(
     const data =
         await response.json();
 
-    const sha =
-        data?.object?.sha;
-
     if (
-        !sha ||
-        !/^[0-9a-f]{40}$/i.test(
-            sha
+        !data?.sha ||
+        !/^[a-f0-9]{40}$/i.test(
+            data.sha
         )
     ) {
         throw new Error(
-            'GitHub branch commit SHA nav derīgs.'
+            'GitHub neatgrieza derīgu commit SHA.'
         );
     }
 
-    return sha;
+    return data.sha;
 }
 
 async function getGitTree(
     githubToken,
     owner,
     repo,
-    ref
+    commitSha
 ) {
-    const encodedRef =
-        encodeURIComponent(ref);
-
-    const url =
-        `https://api.github.com/repos/` +
-        `${encodeURIComponent(owner)}/` +
-        `${encodeURIComponent(repo)}/` +
-        `git/trees/${encodedRef}?recursive=1`;
-
     const response =
         await fetchWithRetry(
-            url,
+            `https://api.github.com/repos/` +
+            `${encodeURIComponent(owner)}/` +
+            `${encodeURIComponent(repo)}/git/trees/` +
+            `${encodeURIComponent(commitSha)}` +
+            '?recursive=1',
             {
                 headers: {
                     Authorization:
-                        `Bearer ${githubToken}`,
-                    Accept:
-                        'application/vnd.github+json',
-                    'X-GitHub-Api-Version':
-                        '2022-11-28'
+                        `Bearer ${githubToken}`
                 }
             }
         );
@@ -757,24 +819,60 @@ async function getGitTree(
 
     if (
         !data ||
-        !Array.isArray(data.tree)
+        !Array.isArray(
+            data.tree
+        )
     ) {
         throw new Error(
-            'GitHub Git Tree dati nav derīgi.'
+            'GitHub Tree dati nav derīgi.'
         );
     }
 
-    if (data.truncated) {
+    if (
+        data.truncated
+    ) {
         throw new Error(
-            'GitHub repozitorijs ir pārāk liels, lai to droši nolasītu vienā Git Tree pieprasījumā.'
+            'GitHub Tree ir pārāk liels un tika saīsināts.'
         );
     }
 
     const blobs =
-        data.tree.filter(
-            item =>
-                item.type === 'blob'
-        );
+        data.tree
+            .filter(
+                entry =>
+                    entry.type ===
+                    'blob'
+            )
+            .map(
+                entry => {
+                    if (
+                        typeof entry.path !==
+                            'string' ||
+                        typeof entry.sha !==
+                            'string' ||
+                        !/^[a-f0-9]{40}$/i.test(
+                            entry.sha
+                        ) ||
+                        !Number.isSafeInteger(
+                            entry.size
+                        ) ||
+                        entry.size < 0
+                    ) {
+                        throw new Error(
+                            'GitHub Tree satur nederīgu faila ierakstu.'
+                        );
+                    }
+
+                    return {
+                        path:
+                            entry.path,
+                        sha:
+                            entry.sha,
+                        size:
+                            entry.size
+                    };
+                }
+            );
 
     if (
         blobs.length >
@@ -785,11 +883,241 @@ async function getGitTree(
         );
     }
 
+    let totalBytes = 0;
+
+    for (const blob of blobs) {
+        if (
+            blob.size >
+            MAX_FILE_BYTES
+        ) {
+            throw new Error(
+                `Fails ${blob.path} pārsniedz ${MAX_FILE_BYTES} bytes limitu.`
+            );
+        }
+
+        totalBytes +=
+            blob.size;
+
+        if (
+            totalBytes >
+            MAX_REPO_BYTES
+        ) {
+            throw new Error(
+                `Repo pārsniedz maksimālo kopējo izmēru (${MAX_REPO_BYTES} bytes).`
+            );
+        }
+    }
+
     return {
         sha:
-            data.sha || null,
+            data.sha,
         blobs
     };
+}
+
+async function verifySubscription(
+    githubUser
+) {
+    const provider =
+        getProvider();
+
+    const contract =
+        new ethers.Contract(
+            SUBSCRIPTION_ADDRESS,
+            SUBSCRIPTION_ABI,
+            provider
+        );
+
+    const hash =
+        githubOwnerHash(
+            githubUser
+        );
+
+    const subscribed =
+        await contract.isSubscribed(
+            hash
+        );
+
+    if (!subscribed) {
+        throw new Error(
+            'Abonements nav aktīvs.'
+        );
+    }
+
+    return true;
+}
+
+function requireGithubSession(
+    req,
+    res
+) {
+    if (
+        !req.session ||
+        !req.session.githubToken ||
+        !req.session.githubUser
+    ) {
+        res.status(401).json({
+            success:
+                false,
+            error:
+                'GitHub sesija nav derīga.'
+        });
+
+        return false;
+    }
+
+    return true;
+}
+
+function validateManifest(
+    manifest
+) {
+    if (
+        !manifest ||
+        typeof manifest !==
+            'object' ||
+        Array.isArray(manifest)
+    ) {
+        throw new Error(
+            'Nederīgs manifests.'
+        );
+    }
+
+    const serialized =
+        JSON.stringify(
+            manifest
+        );
+
+    if (
+        Buffer.byteLength(
+            serialized,
+            'utf8'
+        ) >
+        MAX_MANIFEST_BYTES
+    ) {
+        throw new Error(
+            'Manifests ir pārāk liels.'
+        );
+    }
+
+    if (
+        typeof manifest.archive !==
+            'object' ||
+        !manifest.archive
+    ) {
+        throw new Error(
+            'Manifests nesatur archive informāciju.'
+        );
+    }
+
+    if (
+        typeof manifest.archive.id !==
+            'string' ||
+        !validateArweaveId(
+            manifest.archive.id
+        )
+    ) {
+        throw new Error(
+            'Manifests satur nederīgu archive ID.'
+        );
+    }
+}
+
+async function verifyJobAuthorization(
+    req,
+    job
+) {
+    if (
+        !job ||
+        typeof job !==
+            'object'
+    ) {
+        throw new Error(
+            'Backup job nav derīgs.'
+        );
+    }
+
+    if (
+        job.githubUser !==
+        req.session.githubUser
+    ) {
+        throw new Error(
+            'Backup job nepieder šai GitHub sesijai.'
+        );
+    }
+
+    const wallet =
+        safeWallet(
+            job.walletAddress
+        );
+
+    if (!wallet) {
+        throw new Error(
+            'Backup job satur nederīgu maka adresi.'
+        );
+    }
+
+    return wallet;
+}
+
+async function verifyJobNFTAuthorization(
+    job
+) {
+    const provider =
+        getProvider();
+
+    const contract =
+        new ethers.Contract(
+            NFT_ADDRESS,
+            NFT_ABI,
+            provider
+        );
+
+    const tokenId =
+        BigInt(
+            job.tokenId
+        );
+
+    const owner =
+        await contract.ownerOf(
+            tokenId
+        );
+
+    if (
+        owner.toLowerCase() !==
+        job.walletAddress.toLowerCase()
+    ) {
+        throw new Error(
+            'Backup NFT vairs nepieder autorizētajam makam.'
+        );
+    }
+
+    return true;
+}
+
+async function withJobLock(
+    jobId,
+    fn
+) {
+    const token =
+        await acquireJobLock(
+            jobId
+        );
+
+    if (!token) {
+        throw new Error(
+            'Backup job pašlaik apstrādā cits pieprasījums.'
+        );
+    }
+
+    try {
+        return await fn();
+    } finally {
+        await releaseJobLock(
+            jobId,
+            token
+        );
+    }
 }
 
 async function downloadGitHubZipToTempFile(
@@ -802,7 +1130,8 @@ async function downloadGitHubZipToTempFile(
         );
 
     if (
-        contentLengthHeader !== null
+        contentLengthHeader !==
+        null
     ) {
         const contentLength =
             Number(
@@ -844,9 +1173,9 @@ async function downloadGitHubZipToTempFile(
                         )
                             ? chunk
                             : Buffer.from(
-                                chunk,
-                                encoding
-                            );
+                                  chunk,
+                                  encoding
+                              );
 
                     receivedBytes +=
                         buffer.length;
@@ -896,7 +1225,7 @@ async function downloadGitHubZipToTempFile(
     return receivedBytes;
 }
 
-async function openRepoArchive(
+async function getRepoArchiveMetadata(
     githubToken,
     owner,
     repo,
@@ -926,17 +1255,23 @@ async function openRepoArchive(
             commitSha
         );
 
-    if (tree.blobs.length === 0) {
-        return {
-            repository,
-            commitSha,
-            treeSha: tree.sha,
-            blobs: tree.blobs,
-            tempPath: null,
-            zipfile: null
-        };
-    }
+    return {
+        repository,
+        commitSha,
+        treeSha:
+            tree.sha,
+        blobs:
+            tree.blobs
+    };
+}
 
+async function openRepoArchive(
+    githubToken,
+    owner,
+    repo,
+    commitSha,
+    metadata
+) {
     const zipUrl =
         `https://api.github.com/repos/` +
         `${encodeURIComponent(owner)}/` +
@@ -974,23 +1309,25 @@ async function openRepoArchive(
             await yauzl.openPromise(
                 tempPath,
                 {
-                    lazyEntries: true,
-                    decodeStrings: true,
-                    validateEntrySizes: true
+                    lazyEntries:
+                        true,
+                    decodeStrings:
+                        true,
+                    validateEntrySizes:
+                        true
                 }
             );
 
         return {
-            repository,
-            commitSha,
-            treeSha: tree.sha,
-            blobs: tree.blobs,
+            ...metadata,
             tempPath,
             zipfile
         };
     } catch (error) {
         await fs.promises
-            .unlink(tempPath)
+            .unlink(
+                tempPath
+            )
             .catch(() => {});
 
         throw error;
@@ -1015,10 +1352,12 @@ async function processRepoArchive(
 
     const treeByPath =
         new Map(
-            blobs.map(blob => [
-                blob.path,
-                blob
-            ])
+            blobs.map(
+                blob => [
+                    blob.path,
+                    blob
+                ]
+            )
         );
 
     const seenPaths =
@@ -1052,18 +1391,21 @@ async function processRepoArchive(
             }
 
             const parts =
-                entry.fileName.split('/');
+                entry.fileName.split(
+                    '/'
+                );
 
             const filePath =
                 parts.length > 1
                     ? parts
-                        .slice(1)
-                        .join('/')
+                          .slice(1)
+                          .join('/')
                     : parts[0];
 
             if (
                 !filePath ||
-                filePath.length > 1000 ||
+                filePath.length >
+                    1000 ||
                 filePath
                     .split('/')
                     .some(
@@ -1107,7 +1449,8 @@ async function processRepoArchive(
                 !Number.isSafeInteger(
                     entry.uncompressedSize
                 ) ||
-                entry.uncompressedSize < 0
+                entry.uncompressedSize <
+                    0
             ) {
                 throw new Error(
                     `ZIP ierakstam ${filePath} ir nederīgs nekompresētais izmērs.`
@@ -1163,12 +1506,17 @@ async function processRepoArchive(
             let offset = 0;
 
             for await (
-                const chunk of fileStream
+                const chunk of
+                fileStream
             ) {
                 const buffer =
-                    Buffer.isBuffer(chunk)
+                    Buffer.isBuffer(
+                        chunk
+                    )
                         ? chunk
-                        : Buffer.from(chunk);
+                        : Buffer.from(
+                              chunk
+                          );
 
                 if (
                     offset +
@@ -1207,7 +1555,9 @@ async function processRepoArchive(
             }
 
             const calculatedGitSha =
-                gitSha1.digest('hex');
+                gitSha1.digest(
+                    'hex'
+                );
 
             if (
                 treeEntry.sha !==
@@ -1227,7 +1577,7 @@ async function processRepoArchive(
                 MAX_REPO_BYTES
             ) {
                 throw new Error(
-                    `Repo pārsniedz maksimālo izmēru (${MAX_REPO_BYTES} bytes).`
+                    `Repo pārsniedz maksimālo kopējo izmēru (${MAX_REPO_BYTES} bytes).`
                 );
             }
 
@@ -1246,814 +1596,42 @@ async function processRepoArchive(
                     )
             };
 
-            await onFile(file);
+            await onFile(
+                file
+            );
         }
 
         if (
             entries !==
-                blobs.length ||
-            seenPaths.size !==
-                blobs.length
+            blobs.length
         ) {
             throw new Error(
-                'GitHub repo arhīva failu skaits nesakrīt ar Git Tree.'
+                `GitHub ZIP failu skaits nesakrīt ar Git Tree: ` +
+                `ZIP ${entries} vs Tree ${blobs.length}`
+            );
+        }
+
+        if (
+            seenPaths.size !==
+            blobs.length
+        ) {
+            throw new Error(
+                'GitHub ZIP un Git Tree failu kopas nesakrīt.'
             );
         }
 
         return {
-            files: null,
+            files: [],
             totalBytes
         };
     } finally {
         try {
             zipfile.close();
         } catch {
-            // ZIP jau var būt aizvērts pēc kļūdas.
+            // ZIP jau var būt aizvērts.
         }
     }
 }
-
-async function verifySubscription(
-    githubUser
-) {
-    const provider =
-        getProvider();
-
-    const subscriptionContract =
-        new ethers.Contract(
-            SUBSCRIPTION_ADDRESS,
-            SUBSCRIPTION_ABI,
-            provider
-        );
-
-    const githubHash =
-        githubOwnerHash(
-            githubUser
-        );
-
-    const isSubscribed =
-        await subscriptionContract.isSubscribed(
-            githubHash
-        );
-
-    if (!isSubscribed) {
-        throw new Error(
-            'Abonements nav aktīvs.'
-        );
-    }
-
-    return true;
-}
-
-function assertSameOrigin(req) {
-    const origin =
-        req.get('origin');
-
-    const referer =
-        req.get('referer');
-
-    const expected =
-        `${req.protocol}://${req.get('host')}`;
-
-    if (origin) {
-        if (origin !== expected) {
-            throw new Error(
-                'Nederīgs pieprasījuma origin.'
-            );
-        }
-
-        return;
-    }
-
-    if (referer) {
-        try {
-            const refererOrigin =
-                new URL(
-                    referer
-                ).origin;
-
-            if (
-                refererOrigin !==
-                expected
-            ) {
-                throw new Error(
-                    'Nederīgs pieprasījuma referer.'
-                );
-            }
-        } catch (error) {
-            if (
-                error instanceof Error &&
-                error.message ===
-                    'Nederīgs pieprasījuma referer.'
-            ) {
-                throw error;
-            }
-
-            throw new Error(
-                'Nederīgs pieprasījuma referer.'
-            );
-        }
-    }
-}
-
-function validateJobTxInput(
-    jobId,
-    txId
-) {
-    if (!validateJobId(jobId)) {
-        throw new Error(
-            'Nederīgs job ID.'
-        );
-    }
-
-    if (!validateArweaveId(txId)) {
-        throw new Error(
-            'Nederīgs transakcijas ID.'
-        );
-    }
-}
-
-function validateManifest(
-    manifest
-) {
-    if (
-        !manifest ||
-        typeof manifest !==
-            'object' ||
-        Array.isArray(manifest)
-    ) {
-        throw new Error(
-            'Manifests nav derīgs objekts.'
-        );
-    }
-
-    const serialized =
-        JSON.stringify(
-            manifest
-        );
-
-    if (
-        Buffer.byteLength(
-            serialized,
-            'utf8'
-        ) > MAX_MANIFEST_BYTES
-    ) {
-        throw new Error(
-            'Manifests pārsniedz maksimālo izmēru.'
-        );
-    }
-
-    if (
-        manifest.manifest !==
-        'arweave/paths'
-    ) {
-        throw new Error(
-            'Nederīgs manifesta tips.'
-        );
-    }
-
-    if (
-        manifest.version !==
-        '0.2.0'
-    ) {
-        throw new Error(
-            'Nederīga manifesta versija.'
-        );
-    }
-
-    if (
-        !manifest.paths ||
-        typeof manifest.paths !==
-            'object' ||
-        Array.isArray(manifest.paths)
-    ) {
-        throw new Error(
-            'Manifesta paths nav derīgs objekts.'
-        );
-    }
-
-    for (
-        const [filePath, info]
-        of Object.entries(
-            manifest.paths
-        )
-    ) {
-        if (
-            typeof filePath !==
-                'string' ||
-            filePath.length < 1 ||
-            filePath.length > 1000
-        ) {
-            throw new Error(
-                'Manifests satur nederīgu faila ceļu.'
-            );
-        }
-
-        if (
-            !info ||
-            typeof info !==
-                'object'
-        ) {
-            throw new Error(
-                `Manifesta ieraksts ${filePath} nav derīgs.`
-            );
-        }
-
-        const id =
-            info.id ||
-            info.zipId;
-
-        if (
-            !validateArweaveId(id)
-        ) {
-            throw new Error(
-                `Manifesta ierakstam ${filePath} ir nederīgs ID.`
-            );
-        }
-
-        if (
-            typeof info.hash !==
-                'string' ||
-            !/^[0-9a-fA-F]{64}$/.test(
-                info.hash
-            )
-        ) {
-            throw new Error(
-                `Manifesta ierakstam ${filePath} ir nederīgs SHA-256 hash.`
-            );
-        }
-    }
-
-    return true;
-}
-
-async function verifyJobAuthorization(
-    req,
-    job
-) {
-    if (!job) {
-        throw new Error(
-            'Backup job nav atrasts.'
-        );
-    }
-
-    if (
-        !req.session.githubToken ||
-        !req.session.githubUser
-    ) {
-        throw new Error(
-            'Nav GitHub autorizācijas.'
-        );
-    }
-
-    if (
-        req.session.githubUser !==
-        job.githubUser
-    ) {
-        throw new Error(
-            'GitHub lietotājs nesakrīt ar backup job.'
-        );
-    }
-
-    const wallet =
-        safeWallet(
-            job.walletAddress
-        );
-
-    if (!wallet) {
-        throw new Error(
-            'Backup job satur nederīgu maka adresi.'
-        );
-    }
-
-    return wallet;
-}
-
-async function verifyJobNFTAuthorization(
-    job
-) {
-    const provider =
-        getProvider();
-
-    const nftContract =
-        new ethers.Contract(
-            NFT_ADDRESS,
-            NFT_ABI,
-            provider
-        );
-
-    const tokenId =
-        BigInt(
-            job.tokenId
-        );
-
-    const owner =
-        await nftContract.ownerOf(
-            tokenId
-        );
-
-    if (
-        owner.toLowerCase() !==
-        job.walletAddress.toLowerCase()
-    ) {
-        throw new Error(
-            'Backup job maka adrese vairs nepieder NFT.'
-        );
-    }
-
-    return owner;
-}
-
-async function prepareOAuthLogin(
-    req,
-    res
-) {
-    if (
-        !GITHUB_CLIENT_ID ||
-        !GITHUB_REDIRECT_URI
-    ) {
-        return res.status(500).send(
-            'GitHub OAuth nav konfigurēts.'
-        );
-    }
-
-    const state =
-        createOAuthState();
-
-    req.session.oauthState =
-        state;
-
-    const scope =
-        'repo';
-
-    const params =
-        new URLSearchParams({
-            client_id:
-                GITHUB_CLIENT_ID,
-            redirect_uri:
-                GITHUB_REDIRECT_URI,
-            scope,
-            state
-        });
-
-    return res.redirect(
-        `https://github.com/login/oauth/authorize?${params.toString()}`
-    );
-}
-
-app.get(
-    '/api/github/login',
-    githubApiLimiter,
-    async (req, res) => {
-        try {
-            assertSameOrigin(req);
-
-            return await prepareOAuthLogin(
-                req,
-                res
-            );
-        } catch (error) {
-            return res.status(400).send(
-                errorMessage(error)
-            );
-        }
-    }
-);
-
-app.get(
-    '/api/github/callback',
-    githubApiLimiter,
-    async (req, res) => {
-        const {
-            code,
-            state
-        } = req.query;
-
-        const expectedState =
-            req.session.oauthState;
-
-        delete req.session.oauthState;
-
-        if (
-            typeof expectedState !==
-                'string' ||
-            typeof state !==
-                'string'
-        ) {
-            return res.redirect(
-                '/?error=oauth_state'
-            );
-        }
-
-        const expectedBuffer =
-            Buffer.from(
-                expectedState,
-                'utf8'
-            );
-
-        const suppliedBuffer =
-            Buffer.from(
-                state,
-                'utf8'
-            );
-
-        if (
-            expectedBuffer.length !==
-                suppliedBuffer.length ||
-            !crypto.timingSafeEqual(
-                suppliedBuffer,
-                expectedBuffer
-            )
-        ) {
-            return res.redirect(
-                '/?error=oauth_state'
-            );
-        }
-
-        try {
-            const tokenResponse =
-                await fetch(
-                    'https://github.com/login/oauth/access_token',
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type':
-                                'application/json',
-                            Accept:
-                                'application/json'
-                        },
-                        body: JSON.stringify({
-                            client_id:
-                                GITHUB_CLIENT_ID,
-                            client_secret:
-                                GITHUB_CLIENT_SECRET,
-                            code,
-                            redirect_uri:
-                                GITHUB_REDIRECT_URI
-                        })
-                    }
-                );
-
-            if (
-                !tokenResponse.ok
-            ) {
-                return res.redirect(
-                    '/?error=token'
-                );
-            }
-
-            const tokenData =
-                await tokenResponse.json();
-
-            if (
-                !tokenData.access_token
-            ) {
-                return res.redirect(
-                    '/?error=token'
-                );
-            }
-
-            const userResponse =
-                await fetch(
-                    'https://api.github.com/user',
-                    {
-                        headers: {
-                            Authorization:
-                                `Bearer ${tokenData.access_token}`,
-                            Accept:
-                                'application/vnd.github+json',
-                            'X-GitHub-Api-Version':
-                                '2022-11-28'
-                        }
-                    }
-                );
-
-            if (
-                !userResponse.ok
-            ) {
-                return res.redirect(
-                    '/?error=user'
-                );
-            }
-
-            const userData =
-                await userResponse.json();
-
-            if (
-                !userData.login ||
-                typeof userData.login !==
-                    'string'
-            ) {
-                return res.redirect(
-                    '/?error=user'
-                );
-            }
-
-            await new Promise(
-                (
-                    resolve,
-                    reject
-                ) => {
-                    req.session.regenerate(
-                        error => {
-                            if (error) {
-                                reject(error);
-                                return;
-                            }
-
-                            req.session.githubToken =
-                                tokenData.access_token;
-
-                            req.session.githubUser =
-                                userData.login;
-
-                            req.session.githubAvatar =
-                                userData.avatar_url ||
-                                null;
-
-                            resolve();
-                        }
-                    );
-                }
-            );
-
-            return res.redirect('/');
-        } catch (error) {
-            console.error(
-                'GitHub OAuth callback error:',
-                error
-            );
-
-            return res.redirect(
-                '/?error=oauth'
-            );
-        }
-    }
-);
-
-app.post(
-    '/api/github/logout',
-    async (req, res) => {
-        try {
-            assertSameOrigin(req);
-
-            await new Promise(
-                (
-                    resolve,
-                    reject
-                ) => {
-                    req.session.destroy(
-                        error => {
-                            if (error) {
-                                reject(error);
-                                return;
-                            }
-
-                            resolve();
-                        }
-                    );
-                }
-            );
-
-            res.clearCookie(
-                'connect.sid'
-            );
-
-            return res.json({
-                success: true
-            });
-        } catch (error) {
-            return res.status(500).json({
-                success: false,
-                error:
-                    errorMessage(error)
-            });
-        }
-    }
-);
-
-app.get(
-    '/api/github/user',
-    async (req, res) => {
-        if (
-            !req.session.githubUser
-        ) {
-            return res.json({
-                success: false
-            });
-        }
-
-        return res.json({
-            success: true,
-            user:
-                req.session.githubUser,
-            avatar:
-                req.session.githubAvatar ||
-                null
-        });
-    }
-);
-
-app.get(
-    '/api/github/repos',
-    githubApiLimiter,
-    async (req, res) => {
-        try {
-            if (
-                !requireGithubSession(
-                    req,
-                    res
-                )
-            ) {
-                return;
-            }
-
-            const user =
-                req.session.githubUser;
-
-            const token =
-                req.session.githubToken;
-
-            const repos = [];
-
-            for (
-                let page = 1;
-                page <=
-                    MAX_GITHUB_REPO_PAGES;
-                page++
-            ) {
-                const response =
-                    await fetchWithRetry(
-                        `https://api.github.com/user/repos?per_page=100&page=${page}&sort=updated&direction=desc`,
-                        {
-                            headers: {
-                                Authorization:
-                                    `Bearer ${token}`,
-                                Accept:
-                                    'application/vnd.github+json',
-                                'X-GitHub-Api-Version':
-                                    '2022-11-28'
-                            }
-                        }
-                    );
-
-                const data =
-                    await response.json();
-
-                if (
-                    !Array.isArray(data)
-                ) {
-                    throw new Error(
-                        'GitHub repo saraksts nav derīgs.'
-                    );
-                }
-
-                for (
-                    const repo of data
-                ) {
-                    if (
-                        repo?.owner?.login ===
-                            user
-                    ) {
-                        repos.push({
-                            id:
-                                repo.id,
-                            name:
-                                repo.name,
-                            full_name:
-                                repo.full_name,
-                            private:
-                                Boolean(
-                                    repo.private
-                                ),
-                            archived:
-                                Boolean(
-                                    repo.archived
-                                ),
-                            default_branch:
-                                repo.default_branch ||
-                                'main'
-                        });
-                    }
-                }
-
-                if (
-                    data.length <
-                    100
-                ) {
-                    break;
-                }
-            }
-
-            return res.json({
-                success: true,
-                repos
-            });
-        } catch (error) {
-            return res.status(500).json({
-                success: false,
-                error:
-                    errorMessage(error)
-            });
-        }
-    }
-);
-
-app.get(
-    '/api/config',
-    async (req, res) => {
-        return res.json({
-            chainId:
-                CHAIN_ID,
-            rpcUrl:
-                RPC_URL,
-            nftAddress:
-                NFT_ADDRESS,
-            subscriptionAddress:
-                SUBSCRIPTION_ADDRESS,
-            usdcAddress:
-                USDC_ADDRESS,
-            arweaveGateway:
-                ARWEAVE_GATEWAY,
-            turboUploadUrl:
-                TURBO_UPLOAD_URL,
-            turboPaymentUrl:
-                TURBO_PAYMENT_URL
-        });
-    }
-);
-
-app.get(
-    '/api/subscription/status',
-    async (req, res) => {
-        try {
-            if (
-                !requireGithubSession(
-                    req,
-                    res
-                )
-            ) {
-                return;
-            }
-
-            const provider =
-                getProvider();
-
-            const subscriptionContract =
-                new ethers.Contract(
-                    SUBSCRIPTION_ADDRESS,
-                    SUBSCRIPTION_ABI,
-                    provider
-                );
-
-            const githubHash =
-                githubOwnerHash(
-                    req.session.githubUser
-                );
-
-            const [
-                isSubscribed,
-                expiry,
-                remainingTime,
-                price
-            ] = await Promise.all([
-                subscriptionContract.isSubscribed(
-                    githubHash
-                ),
-                subscriptionContract.getSubscriptionExpiry(
-                    githubHash
-                ),
-                subscriptionContract.getRemainingTime(
-                    githubHash
-                ),
-                subscriptionContract.subscriptionPrice()
-            ]);
-
-            return res.json({
-                success: true,
-                isSubscribed,
-                expiry:
-                    expiry.toString(),
-                remainingTime:
-                    remainingTime.toString(),
-                price:
-                    price.toString(),
-                githubUser:
-                    req.session.githubUser
-            });
-        } catch (error) {
-            return res.status(500).json({
-                success: false,
-                error:
-                    errorMessage(error)
-            });
-        }
-    }
-);
-
-// -----------------------------------------------------------------------------
-// Backup preparation.
-// -----------------------------------------------------------------------------
 
 async function writeNdjson(
     res,
@@ -2071,7 +1649,9 @@ async function writeNdjson(
     const line =
         `${JSON.stringify(payload)}\n`;
 
-    if (res.write(line)) {
+    if (
+        res.write(line)
+    ) {
         return;
     }
 
@@ -2122,17 +1702,294 @@ async function writeNdjson(
     );
 }
 
-app.post(
-    '/api/prepare-backup',
-    backupLimiter,
-    async (req, res) => {
-        let slotAcquired = false;
-        let archive = null;
-        let streamStarted = false;
+app.get(
+    '/api/config',
+    apiLimiter,
+    async (
+        req,
+        res
+    ) => {
+        return res.json({
+            success:
+                true,
+            chainId:
+                CHAIN_ID,
+            rpcUrl:
+                RPC_URL,
+            nftAddress:
+                NFT_ADDRESS,
+            subscriptionAddress:
+                SUBSCRIPTION_ADDRESS,
+            usdcAddress:
+                USDC_ADDRESS,
+            arweaveGateway:
+                ARWEAVE_GATEWAY
+        });
+    }
+);
 
+app.get(
+    '/api/github/user',
+    apiLimiter,
+    async (
+        req,
+        res
+    ) => {
         try {
-            assertSameOrigin(req);
+            if (
+                !req.session ||
+                !req.session.githubToken
+            ) {
+                return res.json({
+                    success:
+                        false
+                });
+            }
 
+            const response =
+                await fetchWithRetry(
+                    'https://api.github.com/user',
+                    {
+                        headers: {
+                            Authorization:
+                                `Bearer ${req.session.githubToken}`
+                        }
+                    }
+                );
+
+            const user =
+                await response.json();
+
+            if (
+                !user ||
+                !user.login
+            ) {
+                throw new Error(
+                    'GitHub lietotāja dati nav derīgi.'
+                );
+            }
+
+            req.session.githubUser =
+                user.login;
+
+            return res.json({
+                success:
+                    true,
+                user: {
+                    login:
+                        user.login,
+                    id:
+                        user.id,
+                    avatar_url:
+                        user.avatar_url
+                }
+            });
+        } catch (error) {
+            req.session.destroy(
+                () => {}
+            );
+
+            return res.status(401).json({
+                success:
+                    false,
+                error:
+                    errorMessage(
+                        error
+                    )
+            });
+        }
+    }
+);
+
+app.get(
+    '/api/github/login',
+    apiLimiter,
+    (
+        req,
+        res
+    ) => {
+        if (
+            !GITHUB_CLIENT_ID ||
+            !GITHUB_REDIRECT_URI
+        ) {
+            return res.status(500).send(
+                'GitHub OAuth nav konfigurēts.'
+            );
+        }
+
+        const scope =
+            'repo';
+
+        const state =
+            crypto.randomBytes(
+                32
+            ).toString(
+                'hex'
+            );
+
+        req.session.oauthState =
+            state;
+
+        const params =
+            new URLSearchParams({
+                client_id:
+                    GITHUB_CLIENT_ID,
+                redirect_uri:
+                    GITHUB_REDIRECT_URI,
+                scope,
+                state
+            });
+
+        return res.redirect(
+            `https://github.com/login/oauth/authorize?${params.toString()}`
+        );
+    }
+);
+
+app.get(
+    '/api/github/callback',
+    apiLimiter,
+    async (
+        req,
+        res
+    ) => {
+        try {
+            const {
+                code,
+                state
+            } = req.query;
+
+            if (
+                typeof code !==
+                    'string' ||
+                typeof state !==
+                    'string' ||
+                state !==
+                    req.session.oauthState
+            ) {
+                throw new Error(
+                    'OAuth state nav derīgs.'
+                );
+            }
+
+            delete req.session.oauthState;
+
+            const tokenResponse =
+                await fetch(
+                    'https://github.com/login/oauth/access_token',
+                    {
+                        method:
+                            'POST',
+                        headers: {
+                            Accept:
+                                'application/json',
+                            'Content-Type':
+                                'application/json'
+                        },
+                        body:
+                            JSON.stringify({
+                                client_id:
+                                    GITHUB_CLIENT_ID,
+                                client_secret:
+                                    GITHUB_CLIENT_SECRET,
+                                code,
+                                redirect_uri:
+                                    GITHUB_REDIRECT_URI
+                            })
+                    }
+                );
+
+            if (
+                !tokenResponse.ok
+            ) {
+                throw new Error(
+                    'GitHub OAuth token pieprasījums neizdevās.'
+                );
+            }
+
+            const tokenData =
+                await tokenResponse.json();
+
+            if (
+                !tokenData.access_token
+            ) {
+                throw new Error(
+                    'GitHub neatgrieza access token.'
+                );
+            }
+
+            req.session.githubToken =
+                tokenData.access_token;
+
+            const userResponse =
+                await fetchWithRetry(
+                    'https://api.github.com/user',
+                    {
+                        headers: {
+                            Authorization:
+                                `Bearer ${tokenData.access_token}`
+                        }
+                    }
+                );
+
+            const user =
+                await userResponse.json();
+
+            if (
+                !user?.login
+            ) {
+                throw new Error(
+                    'GitHub lietotājs nav derīgs.'
+                );
+            }
+
+            req.session.githubUser =
+                user.login;
+
+            return res.redirect(
+                '/'
+            );
+        } catch (error) {
+            console.error(
+                'GitHub OAuth callback kļūda:',
+                error
+            );
+
+            return res.status(400).send(
+                errorMessage(
+                    error
+                )
+            );
+        }
+    }
+);
+
+app.post(
+    '/api/github/logout',
+    apiLimiter,
+    (
+        req,
+        res
+    ) => {
+        req.session.destroy(
+            () => {
+                res.json({
+                    success:
+                        true
+                });
+            }
+        );
+    }
+);
+
+app.get(
+    '/api/github/repos',
+    apiLimiter,
+    async (
+        req,
+        res
+    ) => {
+        try {
             if (
                 !requireGithubSession(
                     req,
@@ -2142,19 +1999,122 @@ app.post(
                 return;
             }
 
-            if (
-                activeBackups >=
-                MAX_CONCURRENT_BACKUPS
+            const repositories =
+                [];
+
+            for (
+                let page = 1;
+                page <=
+                    MAX_GITHUB_REPO_PAGES;
+                page += 1
             ) {
-                return res.status(429).json({
-                    success: false,
-                    error:
-                        'Serveris ir aizņemts. Lūdzu, mēģiniet vēlāk.'
-                });
+                const response =
+                    await fetchWithRetry(
+                        `https://api.github.com/user/repos?` +
+                        new URLSearchParams({
+                            per_page:
+                                '100',
+                            page:
+                                String(
+                                    page
+                                ),
+                            sort:
+                                'updated',
+                            direction:
+                                'desc'
+                        }),
+                        {
+                            headers: {
+                                Authorization:
+                                    `Bearer ${req.session.githubToken}`
+                            }
+                        }
+                    );
+
+                const pageData =
+                    await response.json();
+
+                if (
+                    !Array.isArray(
+                        pageData
+                    )
+                ) {
+                    throw new Error(
+                        'GitHub repo dati nav derīgi.'
+                    );
+                }
+
+                repositories.push(
+                    ...pageData
+                );
+
+                if (
+                    pageData.length <
+                    100
+                ) {
+                    break;
+                }
             }
 
-            activeBackups += 1;
-            slotAcquired = true;
+            return res.json({
+                success:
+                    true,
+                repositories:
+                    repositories.map(
+                        repo => ({
+                            id:
+                                repo.id,
+                            name:
+                                repo.name,
+                            full_name:
+                                repo.full_name,
+                            private:
+                                Boolean(
+                                    repo.private
+                                ),
+                            default_branch:
+                                repo.default_branch ||
+                                'main'
+                        })
+                    )
+            });
+        } catch (error) {
+            return res.status(500).json({
+                success:
+                    false,
+                error:
+                    errorMessage(
+                        error
+                    )
+            });
+        }
+    }
+);
+
+app.post(
+    '/api/prepare-backup',
+    backupLimiter,
+    async (
+        req,
+        res
+    ) => {
+        let archive = null;
+        let streamStarted = false;
+        let queuedTask = null;
+
+        try {
+            assertSameOrigin(
+                req
+            );
+
+            if (
+                !requireGithubSession(
+                    req,
+                    res
+                )
+            ) {
+                return;
+            }
 
             const {
                 repoName,
@@ -2180,15 +2140,19 @@ app.post(
                 )
             ) {
                 return res.status(400).json({
-                    success: false,
+                    success:
+                        false,
                     error:
                         'Nederīgs repo nosaukums.'
                 });
             }
 
-            if (!normalizedWallet) {
+            if (
+                !normalizedWallet
+            ) {
                 return res.status(400).json({
-                    success: false,
+                    success:
+                        false,
                     error:
                         'Nederīga maka adrese.'
                 });
@@ -2235,9 +2199,13 @@ app.post(
                     repoHash
                 );
 
-            if (tokenId === 0n) {
+            if (
+                tokenId ===
+                0n
+            ) {
                 return res.status(400).json({
-                    success: false,
+                    success:
+                        false,
                     error:
                         'Šim repozitorijam nav PermRepo NFT.'
                 });
@@ -2253,7 +2221,8 @@ app.post(
                 normalizedWallet.toLowerCase()
             ) {
                 return res.status(403).json({
-                    success: false,
+                    success:
+                        false,
                     error:
                         'Savienotajam makam nepieder šī repozitorija NFT.'
                 });
@@ -2263,20 +2232,21 @@ app.post(
                 backupCount,
                 lastManifest,
                 lastMerkleRoot
-            ] = await Promise.all([
-                nftContract.getBackupCount(
-                    tokenId
-                ),
-                nftContract.getManifestURI(
-                    tokenId
-                ),
-                nftContract.getLastMerkleRoot(
-                    tokenId
-                )
-            ]);
+            ] =
+                await Promise.all([
+                    nftContract.getBackupCount(
+                        tokenId
+                    ),
+                    nftContract.getManifestURI(
+                        tokenId
+                    ),
+                    nftContract.getLastMerkleRoot(
+                        tokenId
+                    )
+                ]);
 
-            archive =
-                await openRepoArchive(
+            const archiveMetadata =
+                await getRepoArchiveMetadata(
                     githubToken,
                     githubUser,
                     repoName,
@@ -2285,14 +2255,34 @@ app.post(
                 );
 
             if (
-                archive.blobs.length ===
+                archiveMetadata.blobs.length ===
                 0
             ) {
                 return res.status(400).json({
-                    success: false,
+                    success:
+                        false,
                     error:
                         'Repozitorijā nav failu.'
                 });
+            }
+
+            const largestFileBytes =
+                getLargestTreeFileBytes(
+                    archiveMetadata.blobs
+                );
+
+            const memoryReservationBytes =
+                estimateBackupMemoryBytes(
+                    largestFileBytes
+                );
+
+            if (
+                memoryReservationBytes >
+                BACKUP_MEMORY_BUDGET_BYTES
+            ) {
+                throw new Error(
+                    'Šis backup ir pārāk liels servera RAM budžetam.'
+                );
             }
 
             const jobId =
@@ -2301,7 +2291,62 @@ app.post(
             const now =
                 Date.now();
 
-            res.status(200);
+            const job = {
+                version:
+                    5,
+                jobId,
+                githubUser,
+                repoName,
+                fullRepoName,
+                githubRepositoryId:
+                    String(
+                        archiveMetadata.repository.id
+                    ),
+                githubDefaultBranch:
+                    archiveMetadata.repository.defaultBranch,
+                githubCommitSha:
+                    archiveMetadata.commitSha,
+                githubTreeSha:
+                    archiveMetadata.treeSha,
+                walletAddress:
+                    normalizedWallet,
+                tokenId:
+                    tokenId.toString(),
+                onChainBackupCount:
+                    backupCount.toString(),
+                lastManifest:
+                    lastManifest ||
+                    null,
+                lastMerkleRoot:
+                    lastMerkleRoot ||
+                    null,
+                changedFiles:
+                    [],
+                status:
+                    'queued',
+                zipTxId:
+                    null,
+                manifestTxId:
+                    null,
+                manifest:
+                    null,
+                memoryReservationBytes,
+                largestFileBytes,
+                createdAt:
+                    now,
+                updatedAt:
+                    now
+            };
+
+            await createJob(
+                jobId,
+                job,
+                JOB_TTL_SECONDS
+            );
+
+            res.status(
+                200
+            );
 
             res.setHeader(
                 'Content-Type',
@@ -2320,188 +2365,377 @@ app.post(
 
             res.flushHeaders();
 
-            streamStarted = true;
+            streamStarted =
+                true;
+
+            const queuePosition =
+                backupQueue.length +
+                1;
 
             await writeNdjson(
                 res,
                 {
                     type:
-                        'meta',
+                        'queued',
                     success:
                         true,
                     jobId,
-                    repoName:
-                        fullRepoName,
-                    githubRepositoryId:
-                        String(
-                            archive.repository.id
-                        ),
-                    githubDefaultBranch:
-                        archive.repository.defaultBranch,
-                    githubCommitSha:
-                        archive.commitSha,
-                    githubTreeSha:
-                        archive.treeSha,
-                    tokenId:
-                        tokenId.toString(),
-                    backupCount:
-                        backupCount.toString(),
-                    lastManifest:
-                        lastManifest ||
-                        null,
-                    lastMerkleRoot:
-                        lastMerkleRoot ||
-                        null
+                    queuePosition,
+                    memoryReservationBytes,
+                    largestFileBytes,
+                    activeBackups,
+                    reservedMemoryBytes:
+                        reservedBackupMemoryBytes,
+                    memoryBudgetBytes:
+                        BACKUP_MEMORY_BUDGET_BYTES
                 }
             );
 
-            const jobFiles = [];
-            let totalBytes = 0;
+            let resolveTask;
+            let rejectTask;
 
-            await processRepoArchive(
-                archive,
-                async file => {
-                    jobFiles.push({
-                        path:
-                            file.path,
-                        hash:
-                            file.hash,
-                        size:
-                            file.size
-                    });
+            const slotPromise =
+                new Promise(
+                    (
+                        resolve,
+                        reject
+                    ) => {
+                        resolveTask =
+                            resolve;
+                        rejectTask =
+                            reject;
+                    }
+                );
 
-                    totalBytes +=
-                        file.size;
+            queuedTask = {
+                memoryReservationBytes,
+                started:
+                    false,
+                cancelled:
+                    false,
+                queuePosition,
+                run:
+                    async () => {
+                        try {
+                            await writeNdjson(
+                                res,
+                                {
+                                    type:
+                                        'started',
+                                    success:
+                                        true,
+                                    jobId,
+                                    activeBackups:
+                                        activeBackups,
+                                    reservedMemoryBytes:
+                                        reservedBackupMemoryBytes,
+                                    memoryBudgetBytes:
+                                        BACKUP_MEMORY_BUDGET_BYTES
+                                }
+                            );
 
-                    await writeNdjson(
-                        res,
-                        {
-                            type:
-                                'file',
-                            file
+                            archive =
+                                await openRepoArchive(
+                                    githubToken,
+                                    githubUser,
+                                    repoName,
+                                    archiveMetadata.commitSha,
+                                    archiveMetadata
+                                );
+
+                            await writeNdjson(
+                                res,
+                                {
+                                    type:
+                                        'meta',
+                                    success:
+                                        true,
+                                    jobId,
+                                    repoName:
+                                        fullRepoName,
+                                    githubRepositoryId:
+                                        String(
+                                            archive.repository.id
+                                        ),
+                                    githubDefaultBranch:
+                                        archive.repository.defaultBranch,
+                                    githubCommitSha:
+                                        archive.commitSha,
+                                    githubTreeSha:
+                                        archive.treeSha,
+                                    tokenId:
+                                        tokenId.toString(),
+                                    backupCount:
+                                        backupCount.toString(),
+                                    lastManifest:
+                                        lastManifest ||
+                                        null,
+                                    lastMerkleRoot:
+                                        lastMerkleRoot ||
+                                        null
+                                }
+                            );
+
+                            const jobFiles =
+                                [];
+
+                            let totalBytes =
+                                0;
+
+                            await processRepoArchive(
+                                archive,
+                                async file => {
+                                    jobFiles.push({
+                                        path:
+                                            file.path,
+                                        hash:
+                                            file.hash,
+                                        size:
+                                            file.size
+                                    });
+
+                                    totalBytes +=
+                                        file.size;
+
+                                    await writeNdjson(
+                                        res,
+                                        {
+                                            type:
+                                                'file',
+                                            file
+                                        }
+                                    );
+                                }
+                            );
+
+                            await updateJob(
+                                jobId,
+                                {
+                                    changedFiles:
+                                        jobFiles,
+                                    status:
+                                        'prepared',
+                                    updatedAt:
+                                        Date.now()
+                                },
+                                JOB_TTL_SECONDS
+                            );
+
+                            await writeNdjson(
+                                res,
+                                {
+                                    type:
+                                        'complete',
+                                    success:
+                                        true,
+                                    jobId,
+                                    repoName:
+                                        fullRepoName,
+                                    githubRepositoryId:
+                                        String(
+                                            archive.repository.id
+                                        ),
+                                    githubDefaultBranch:
+                                        archive.repository.defaultBranch,
+                                    githubCommitSha:
+                                        archive.commitSha,
+                                    githubTreeSha:
+                                        archive.treeSha,
+                                    tokenId:
+                                        tokenId.toString(),
+                                    backupCount:
+                                        backupCount.toString(),
+                                    lastManifest:
+                                        lastManifest ||
+                                        null,
+                                    lastMerkleRoot:
+                                        lastMerkleRoot ||
+                                        null,
+                                    fileCount:
+                                        jobFiles.length,
+                                    totalBytes
+                                }
+                            );
+
+                            res.end();
+                        } catch (error) {
+                            await updateJob(
+                                jobId,
+                                {
+                                    status:
+                                        'prepare-failed',
+                                    error:
+                                        errorMessage(
+                                            error
+                                        )
+                                },
+                                JOB_TTL_SECONDS
+                            ).catch(
+                                () => {}
+                            );
+
+                            if (
+                                !res.writableEnded
+                            ) {
+                                try {
+                                    await writeNdjson(
+                                        res,
+                                        {
+                                            type:
+                                                'error',
+                                            success:
+                                                false,
+                                            jobId,
+                                            error:
+                                                errorMessage(
+                                                    error
+                                                )
+                                        }
+                                    );
+                                } catch {
+                                    // Klients var būt jau atvienojies.
+                                }
+
+                                if (
+                                    !res.writableEnded
+                                ) {
+                                    res.end();
+                                }
+                            }
+
+                            throw error;
+                        } finally {
+                            if (
+                                archive?.zipfile
+                            ) {
+                                try {
+                                    archive.zipfile.close();
+                                } catch {
+                                    // ZIP jau var būt aizvērts.
+                                }
+                            }
+
+                            if (
+                                archive?.tempPath
+                            ) {
+                                await fs.promises
+                                    .unlink(
+                                        archive.tempPath
+                                    )
+                                    .catch(
+                                        () => {}
+                                    );
+                            }
+
+                            archive =
+                                null;
                         }
-                    );
-                }
-            );
-
-            const job = {
-                version: 4,
-                jobId,
-                githubUser,
-                repoName,
-                fullRepoName,
-                githubRepositoryId:
-                    String(
-                        archive.repository.id
-                    ),
-                githubDefaultBranch:
-                    archive.repository.defaultBranch,
-                githubCommitSha:
-                    archive.commitSha,
-                githubTreeSha:
-                    archive.treeSha,
-                walletAddress:
-                    normalizedWallet,
-                tokenId:
-                    tokenId.toString(),
-                onChainBackupCount:
-                    backupCount.toString(),
-                lastManifest:
-                    lastManifest ||
-                    null,
-                lastMerkleRoot:
-                    lastMerkleRoot ||
-                    null,
-                changedFiles:
-                    jobFiles,
-                status:
-                    'prepared',
-                zipTxId:
-                    null,
-                manifestTxId:
-                    null,
-                manifest:
-                    null,
-                createdAt:
-                    now,
-                updatedAt:
-                    now
+                    },
+                resolve:
+                    resolveTask,
+                reject:
+                    rejectTask
             };
 
-            await createJob(
-                jobId,
-                job,
-                JOB_TTL_SECONDS
+            const cancelQueuedTask =
+                () => {
+                    if (
+                        queuedTask &&
+                        !queuedTask.started
+                    ) {
+                        queuedTask.cancelled =
+                            true;
+
+                        removeQueuedBackup(
+                            queuedTask
+                        );
+
+                        rejectTask(
+                            new Error(
+                                'Klienta savienojums tika pārtraukts.'
+                            )
+                        );
+
+                        return;
+                    }
+
+                    if (
+                        queuedTask &&
+                        queuedTask.started &&
+                        !res.writableEnded
+                    ) {
+                        rejectTask(
+                            new Error(
+                                'Klienta savienojums tika pārtraukts.'
+                            )
+                        );
+                    }
+                };
+
+            queuedTask.cancelHandler =
+                cancelQueuedTask;
+
+            res.once(
+                'close',
+                queuedTask.cancelHandler
             );
 
-            await writeNdjson(
-                res,
-                {
-                    type:
-                        'complete',
-                    success:
-                        true,
-                    jobId,
-                    repoName:
-                        fullRepoName,
-                    githubRepositoryId:
-                        String(
-                            archive.repository.id
-                        ),
-                    githubDefaultBranch:
-                        archive.repository.defaultBranch,
-                    githubCommitSha:
-                        archive.commitSha,
-                    githubTreeSha:
-                        archive.treeSha,
-                    tokenId:
-                        tokenId.toString(),
-                    backupCount:
-                        backupCount.toString(),
-                    lastManifest:
-                        lastManifest ||
-                        null,
-                    lastMerkleRoot:
-                        lastMerkleRoot ||
-                        null,
-                    fileCount:
-                        jobFiles.length,
-                    totalBytes
-                }
+            backupQueue.push(
+                queuedTask
             );
 
-            res.end();
+            await pumpBackupQueue();
+            await slotPromise;
         } catch (error) {
             logSection(
                 '❌ BACKUP PREPARE ERROR'
             );
 
-            console.error(error);
+            console.error(
+                error
+            );
 
             if (
-                streamStarted &&
-                !res.writableEnded
+                queuedTask &&
+                !queuedTask.started
             ) {
-                try {
-                    await writeNdjson(
-                        res,
-                        {
-                            type:
-                                'error',
-                            success:
-                                false,
-                            error:
-                                errorMessage(
-                                    error
-                                )
-                        }
-                    );
-                } catch {
-                    // Klients var būt jau atvienojies.
-                }
+                queuedTask.cancelled =
+                    true;
 
-                if (!res.writableEnded) {
-                    res.end();
+                removeQueuedBackup(
+                    queuedTask
+                );
+            }
+
+            if (
+                streamStarted
+            ) {
+                if (
+                    !res.writableEnded
+                ) {
+                    try {
+                        await writeNdjson(
+                            res,
+                            {
+                                type:
+                                    'error',
+                                success:
+                                    false,
+                                error:
+                                    errorMessage(
+                                        error
+                                    )
+                            }
+                        );
+                    } catch {
+                        // Klients var būt jau atvienojies.
+                    }
+
+                    if (
+                        !res.writableEnded
+                    ) {
+                        res.end();
+                    }
                 }
 
                 return;
@@ -2509,13 +2743,17 @@ app.post(
 
             const status =
                 /abonements nav aktīvs/i.test(
-                    errorMessage(error)
+                    errorMessage(
+                        error
+                    )
                 )
                     ? 403
                     : 500;
 
             return res
-                .status(status)
+                .status(
+                    status
+                )
                 .json({
                     success:
                         false,
@@ -2525,7 +2763,30 @@ app.post(
                         )
                 });
         } finally {
-            if (archive?.zipfile) {
+            if (
+                queuedTask?.cancelHandler
+            ) {
+                res.off(
+                    'close',
+                    queuedTask.cancelHandler
+                );
+            }
+
+            if (
+                queuedTask &&
+                !queuedTask.started
+            ) {
+                queuedTask.cancelled =
+                    true;
+
+                removeQueuedBackup(
+                    queuedTask
+                );
+            }
+
+            if (
+                archive?.zipfile
+            ) {
                 try {
                     archive.zipfile.close();
                 } catch {
@@ -2533,16 +2794,16 @@ app.post(
                 }
             }
 
-            if (archive?.tempPath) {
+            if (
+                archive?.tempPath
+            ) {
                 await fs.promises
                     .unlink(
                         archive.tempPath
                     )
-                    .catch(() => {});
-            }
-
-            if (slotAcquired) {
-                activeBackups -= 1;
+                    .catch(
+                        () => {}
+                    );
             }
         }
     }
@@ -2555,9 +2816,14 @@ app.post(
 app.post(
     '/api/save-zip-tx',
     backupLimiter,
-    async (req, res) => {
+    async (
+        req,
+        res
+    ) => {
         try {
-            assertSameOrigin(req);
+            assertSameOrigin(
+                req
+            );
 
             if (
                 !requireGithubSession(
@@ -2573,10 +2839,27 @@ app.post(
                 zipTxId
             } = req.body;
 
-            validateJobTxInput(
-                jobId,
-                zipTxId
-            );
+            if (
+                !validateJobId(
+                    jobId
+                )
+            ) {
+                throw new Error(
+                    'Nederīgs jobId.'
+                );
+            }
+
+            if (
+                typeof zipTxId !==
+                    'string' ||
+                !validateArweaveId(
+                    zipTxId
+                )
+            ) {
+                throw new Error(
+                    'Nederīgs ZIP transakcijas ID.'
+                );
+            }
 
             return await withJobLock(
                 jobId,
@@ -2630,7 +2913,9 @@ app.post(
             );
         } catch (error) {
             const message =
-                errorMessage(error);
+                errorMessage(
+                    error
+                );
 
             const status =
                 /nav atrasts|nav github|nesakrīt|nepieder|nederīgs|nevar mainīt/i.test(
@@ -2640,7 +2925,9 @@ app.post(
                     : 500;
 
             return res
-                .status(status)
+                .status(
+                    status
+                )
                 .json({
                     success:
                         false,
@@ -2654,9 +2941,14 @@ app.post(
 app.post(
     '/api/save-manifest-tx',
     backupLimiter,
-    async (req, res) => {
+    async (
+        req,
+        res
+    ) => {
         try {
-            assertSameOrigin(req);
+            assertSameOrigin(
+                req
+            );
 
             if (
                 !requireGithubSession(
@@ -2673,10 +2965,27 @@ app.post(
                 manifest
             } = req.body;
 
-            validateJobTxInput(
-                jobId,
-                manifestTxId
-            );
+            if (
+                !validateJobId(
+                    jobId
+                )
+            ) {
+                throw new Error(
+                    'Nederīgs jobId.'
+                );
+            }
+
+            if (
+                typeof manifestTxId !==
+                    'string' ||
+                !validateArweaveId(
+                    manifestTxId
+                )
+            ) {
+                throw new Error(
+                    'Nederīgs manifesta transakcijas ID.'
+                );
+            }
 
             validateManifest(
                 manifest
@@ -2704,7 +3013,9 @@ app.post(
                         }
                     );
 
-                    if (!job.zipTxId) {
+                    if (
+                        !job.zipTxId
+                    ) {
                         throw new Error(
                             'ZIP transakcija vēl nav saglabāta.'
                         );
@@ -2750,7 +3061,9 @@ app.post(
             );
         } catch (error) {
             const message =
-                errorMessage(error);
+                errorMessage(
+                    error
+                );
 
             const status =
                 /nav atrasts|nav github|nesakrīt|nepieder|nederīgs|nevar mainīt/i.test(
@@ -2760,7 +3073,9 @@ app.post(
                     : 500;
 
             return res
-                .status(status)
+                .status(
+                    status
+                )
                 .json({
                     success:
                         false,
@@ -2772,42 +3087,86 @@ app.post(
 );
 
 app.get(
-    '/api/health',
-    async (req, res) => {
-        return res.json({
-            success: true,
-            redis:
-                Boolean(redisClient),
-            rpc:
-                Boolean(RPC_URL),
-            nft:
-                Boolean(NFT_ADDRESS),
-            subscription:
-                Boolean(
-                    SUBSCRIPTION_ADDRESS
-                ),
-            github:
-                Boolean(
-                    GITHUB_CLIENT_ID &&
-                    GITHUB_CLIENT_SECRET &&
-                    GITHUB_REDIRECT_URI
-                ),
-            turboUpload:
-                Boolean(
-                    TURBO_UPLOAD_URL
-                ),
-            turboPayment:
-                Boolean(
-                    TURBO_PAYMENT_URL
+    '/api/job/:jobId',
+    backupLimiter,
+    async (
+        req,
+        res
+    ) => {
+        try {
+            assertSameOrigin(
+                req
+            );
+
+            if (
+                !requireGithubSession(
+                    req,
+                    res
                 )
-        });
+            ) {
+                return;
+            }
+
+            const {
+                jobId
+            } = req.params;
+
+            if (
+                !validateJobId(
+                    jobId
+                )
+            ) {
+                return res.status(400).json({
+                    success:
+                        false,
+                    error:
+                        'Nederīgs jobId.'
+                });
+            }
+
+            const job =
+                await getJob(
+                    jobId
+                );
+
+            if (
+                !job ||
+                job.githubUser !==
+                    req.session.githubUser
+            ) {
+                return res.status(404).json({
+                    success:
+                        false,
+                    error:
+                        'Backup job nav atrasts.'
+                });
+            }
+
+            return res.json({
+                success:
+                    true,
+                job
+            });
+        } catch (error) {
+            return res.status(500).json({
+                success:
+                    false,
+                error:
+                    errorMessage(
+                        error
+                    )
+            });
+        }
     }
 );
 
 app.get(
     '*',
-    (req, res) => {
-        res.sendFile(
+    (
+        req,
+        res
+    ) => {
+        return res.sendFile(
             path.join(
                 __dirname,
                 'dist',
@@ -2817,85 +3176,122 @@ app.get(
     }
 );
 
-app.listen(
-    PORT,
+const server =
+    app.listen(
+        PORT,
+        () => {
+            logSection(
+                '🚀 PermRepo server started'
+            );
+
+            logInfo(
+                'Port',
+                PORT
+            );
+
+            logInfo(
+                'Chain ID',
+                CHAIN_ID
+            );
+
+            logInfo(
+                'Max repo files',
+                MAX_REPO_FILES
+            );
+
+            logInfo(
+                'Max repo bytes',
+                MAX_REPO_BYTES
+            );
+
+            logInfo(
+                'Max file bytes',
+                MAX_FILE_BYTES
+            );
+
+            logInfo(
+                'Max ZIP bytes',
+                MAX_ZIP_BYTES
+            );
+
+            logInfo(
+                'Backup RAM budget',
+                `${BACKUP_MEMORY_BUDGET_BYTES} bytes`
+            );
+
+            logInfo(
+                'Backup RAM hard limit',
+                `${BACKUP_MEMORY_HARD_LIMIT_BYTES} bytes`
+            );
+
+            logInfo(
+                'Backup RAM multiplier',
+                BACKUP_MEMORY_PER_FILE_MULTIPLIER
+            );
+
+            logInfo(
+                'Redis',
+                '✅ IR'
+            );
+
+            logInfo(
+                'RPC',
+                RPC_URL
+            );
+
+            logInfo(
+                'NFT',
+                NFT_ADDRESS ||
+                    '❌ NAV'
+            );
+
+            logInfo(
+                'Subscription',
+                SUBSCRIPTION_ADDRESS ||
+                    '❌ NAV'
+            );
+
+            logInfo(
+                'Turbo Upload',
+                TURBO_UPLOAD_URL ||
+                    '❌ NAV'
+            );
+
+            logInfo(
+                'Turbo Payment',
+                TURBO_PAYMENT_URL ||
+                    '❌ NAV'
+            );
+
+            console.log(
+                '='.repeat(60) +
+                '\n'
+            );
+        }
+    );
+
+process.on(
+    'SIGTERM',
     () => {
-        logSection(
-            '🚀 PermRepo server started'
+        server.close(
+            () => {
+                process.exit(
+                    0
+                );
+            }
         );
+    }
+);
 
-        logInfo(
-            'Port',
-            PORT
-        );
-
-        logInfo(
-            'Chain ID',
-            CHAIN_ID
-        );
-
-        logInfo(
-            'Max repo files',
-            MAX_REPO_FILES
-        );
-
-        logInfo(
-            'Max repo bytes',
-            MAX_REPO_BYTES
-        );
-
-        logInfo(
-            'Max file bytes',
-            MAX_FILE_BYTES
-        );
-
-        logInfo(
-            'Max ZIP bytes',
-            MAX_ZIP_BYTES
-        );
-
-        logInfo(
-            'Max concurrent backups',
-            MAX_CONCURRENT_BACKUPS
-        );
-
-        logInfo(
-            'Redis',
-            '✅ IR'
-        );
-
-        logInfo(
-            'RPC',
-            RPC_URL
-        );
-
-        logInfo(
-            'NFT',
-            NFT_ADDRESS ||
-                '❌ NAV'
-        );
-
-        logInfo(
-            'Subscription',
-            SUBSCRIPTION_ADDRESS ||
-                '❌ NAV'
-        );
-
-        logInfo(
-            'Turbo Upload',
-            TURBO_UPLOAD_URL ||
-                '❌ NAV'
-        );
-
-        logInfo(
-            'Turbo Payment',
-            TURBO_PAYMENT_URL ||
-                '❌ NAV'
-        );
-
-        console.log(
-            '='.repeat(60) +
-            '\n'
+process.on(
+    'SIGINT',
+    () => {
+        server.close(
+            () => {
+                process.exit(
+                    0
+                );
+            }
         );
     }
 );
