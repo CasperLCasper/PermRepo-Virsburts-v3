@@ -28,6 +28,8 @@ export const translations = {
         'last-merkle': 'Pēdējā Merkle sakne',
         'continue-backup': 'Turpināt backupu',
         'preparing': 'Sagatavo backupu...',
+        'backup-queued': 'Backup ir rindā. Pašlaik servera resursi ir aizņemti.',
+        'backup-queue-position': 'vieta rindā (sākotnējais novērtējums)',
         'no-changes': 'Nav izmaiņu — visi faili jau ir backupēti!',
         'generate-key': 'Ģenerē master atslēgu...',
         'enter-key': 'Ievadi savu Master Key:',
@@ -62,6 +64,7 @@ export const translations = {
         'invalid-upload-id': 'Nederīgs augšupielādes ID',
         'unknown-error': 'Nezināma kļūda'
     },
+
     en: {
         subtitle: 'GitHub repo backups to Arweave',
         'connect-github': 'Connect with GitHub',
@@ -91,6 +94,8 @@ export const translations = {
         'last-merkle': 'Last Merkle root',
         'continue-backup': 'Continue backup',
         'preparing': 'Preparing backup...',
+        'backup-queued': 'Backup is queued. Server resources are currently busy.',
+        'backup-queue-position': 'position in queue (initial estimate)',
         'no-changes': 'No changes — all files already backed up!',
         'generate-key': 'Generating master key...',
         'enter-key': 'Enter your Master Key:',
@@ -125,6 +130,7 @@ export const translations = {
         'invalid-upload-id': 'Invalid upload ID',
         'unknown-error': 'Unknown error'
     },
+
     eo: {
         subtitle: 'GitHub-repozitorio sekurkopioj al Arweave',
         'connect-github': 'Konekti kun GitHub',
@@ -154,6 +160,8 @@ export const translations = {
         'last-merkle': 'Lasta Merkle-radiko',
         'continue-backup': 'Daŭrigu sekurkopion',
         'preparing': 'Preparante sekurkopion...',
+        'backup-queued': 'Sekurkopio estas en vico. Servilaj rimedoj estas nun okupitaj.',
+        'backup-queue-position': 'loko en la vico (komenca takso)',
         'no-changes': 'Neniu ŝanĝo — ĉiuj dosieroj jam sekurkopiitaj!',
         'generate-key': 'Generante ĉefŝlosilon...',
         'enter-key': 'Enigu vian Ĉefŝlosilon:',
