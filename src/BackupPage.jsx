@@ -84,6 +84,7 @@ function BackupPage() {
     const [isWorking, setIsWorking] = useState(false);
     const [backupCompleted, setBackupCompleted] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
+    const [queuePosition, setQueuePosition] = useState(null);
     
     const [nftInfo, setNftInfo] = useState({
         tokenId: null,
@@ -218,7 +219,6 @@ function BackupPage() {
             downloadButton.style.cssText = 'width:100%;padding:12px;background:#21262d;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-bottom:8px;';
             const closeButton = document.createElement('button');
             closeButton.textContent = t('saving-key');
-            
             closeButton.style.cssText = 'width:100%;padding:12px;background:#f85149;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;';
             box.appendChild(title);
             box.appendChild(description);
@@ -280,8 +280,10 @@ function BackupPage() {
         }
     }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
+    // ✅ NDJSON lasīšana no servera
     useEffect(() => {
         let cancelled = false;
+        let reader = null;
 
         const initPage = async () => {
             try {
@@ -343,29 +345,107 @@ function BackupPage() {
                     }
                 }
 
-                // Serveris šeit vienlaikus pārbauda aktīvu subscription, NFT owner un repo piekļuvi.
-                const result = await apiJson('/api/prepare-backup', {
+                // ✅ NDJSON streaming no servera
+                const response = await fetch('/api/prepare-backup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
                     body: JSON.stringify({ repoName, walletAddress: currentAddress })
                 });
 
+                if (!response.ok) {
+                    let errorMessage = `HTTP ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        errorMessage = errorData.error || errorMessage;
+                    } catch {
+                        // Nav JSON
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                const files = [];
+                let metadata = null;
+                let serverError = null;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (cancelled) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+
+                        let parsed;
+                        try {
+                            parsed = JSON.parse(line);
+                        } catch {
+                            continue;
+                        }
+
+                        switch (parsed.type) {
+                            case 'queued':
+                                setQueuePosition(parsed.queuePosition);
+                                setStatus(`${t('queued-position')}: ${parsed.queuePosition}`);
+                                setLastStatusData({ type: 'queued', position: parsed.queuePosition });
+                                break;
+                            case 'queue-status':
+                                setQueuePosition(parsed.queuePosition);
+                                setStatus(`${t('queued-position')}: ${parsed.queuePosition}`);
+                                setLastStatusData({ type: 'queued', position: parsed.queuePosition });
+                                break;
+                            case 'started':
+                                setQueuePosition(null);
+                                setStatus(t('processing'));
+                                setLastStatusData({ type: 'simple', key: 'processing' });
+                                break;
+                            case 'meta':
+                                metadata = parsed;
+                                setNftInfo({
+                                    tokenId: parsed.tokenId,
+                                    backupCount: parsed.backupCount,
+                                    lastManifest: parsed.lastManifest || null,
+                                    lastMerkleRoot: parsed.lastMerkleRoot || null
+                                });
+                                setPreparedJobId(parsed.jobId);
+                                break;
+                            case 'file':
+                                files.push(parsed.file);
+                                break;
+                            case 'complete':
+                                metadata = { ...metadata, ...parsed };
+                                break;
+                            case 'error':
+                                serverError = parsed.error;
+                                break;
+                        }
+                    }
+                }
+
                 if (cancelled) return;
 
-                setNftInfo({
-                    tokenId: result.tokenId,
-                    backupCount: result.backupCount,
-                    lastManifest: result.lastManifest || null,
-                    lastMerkleRoot: result.lastMerkleRoot || null
-                });
-                setPreparedJobId(result.jobId);
+                if (serverError) {
+                    throw new Error(serverError);
+                }
 
+                if (!metadata) {
+                    throw new Error(t('backup-session-invalid'));
+                }
+
+                // ✅ Ielādē iepriekšējo manifestu
                 let previousPaths = {};
                 let previousHistory = [];
                 let previousEncryptionIVs = {};
 
-                if (result.lastManifest && result.lastManifest.startsWith('ar://')) {
-                    const prevManifestId = result.lastManifest.slice(5);
+                if (metadata.lastManifest && metadata.lastManifest.startsWith('ar://')) {
+                    const prevManifestId = metadata.lastManifest.slice(5);
                     if (!isValidManifestId(prevManifestId)) {
                         throw new Error(t('invalid-manifest'));
                     }
@@ -391,7 +471,7 @@ function BackupPage() {
                     }
                 }
 
-                const files = result.files || [];
+                // ✅ Nosaka mainītos un nemainītos failus
                 const changedFiles = [];
                 const unchangedFiles = {};
 
@@ -404,7 +484,7 @@ function BackupPage() {
                     }
                 }
 
-                setCurrentPreviousBackupNumber(Number(result.backupCount || 0));
+                setCurrentPreviousBackupNumber(Number(metadata.backupCount || 0));
                 setFileInfo({
                     count: changedFiles.length,
                     sizeText: formatFileSize(changedFiles.reduce((sum, file) => sum + Number(file.size), 0)),
@@ -412,6 +492,10 @@ function BackupPage() {
                 });
                 setChangedFilesForUpload(changedFiles);
                 setUnchangedFilesForUpload(unchangedFiles);
+                
+                // ✅ Notīra statusu pēc ielādes
+                setStatus('');
+                setLastStatusData(null);
             } catch (e) {
                 if (cancelled) return;
                 setError(getSafeErrorMessage(e));
@@ -420,7 +504,13 @@ function BackupPage() {
         };
 
         initPage();
-        return () => { cancelled = true; };
+        
+        return () => { 
+            cancelled = true;
+            if (reader) {
+                reader.cancel().catch(() => {});
+            }
+        };
     }, [apiJson, repoName, t, formatFileSize]);
 
     const continueBackup = useCallback(async () => {
@@ -446,7 +536,6 @@ function BackupPage() {
             
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
             
-            // ✅ LABOTS: Number.parseInt vietā parseInt
             if (Number.parseInt(currentChainId, 16) !== Number(config.chainId)) {
                 try {
                     await window.ethereum.request({ 
@@ -638,7 +727,6 @@ function BackupPage() {
                     body: JSON.stringify({ jobId, zipTxId })
                 });
             } else {
-                // Ja ZIP jau bija augšupielādēts, serverim atkārtoti saglabājam to pašu ID.
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1193,7 +1281,9 @@ function BackupPage() {
                                 lastStatusData?.type ===
                                 'success'
                                     ? 'izdevas-veiksmigi'
-                                    : 'upload'
+                                    : lastStatusData?.type === 'queued'
+                                        ? 'upload'
+                                        : 'upload'
                             }
                         />
                         {' '}
