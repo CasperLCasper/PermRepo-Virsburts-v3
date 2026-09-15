@@ -15,12 +15,10 @@ const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external"
 ];
 
-// ✅ React komponente ikonai — DROŠI, bez dangerouslySetInnerHTML
 function Icon({ name }) {
     return <img src={`/icons/${name}.svg`} className="icon-inline" alt="" aria-hidden="true" />;
 }
 
-// ✅ Baltā saraksta gateway (SonarCloud prasība)
 const ALLOWED_GATEWAY_HOSTS = [
     'arweave.net',
     'ar-io.dev',
@@ -28,15 +26,12 @@ const ALLOWED_GATEWAY_HOSTS = [
     'gateway.arweave.net'
 ];
 
-// ✅ Atļautās shēmas
 const ALLOWED_SCHEMES = ['https:'];
 
-// ✅ Manifesta ID validācija
 function isValidManifestId(id) {
     return typeof id === 'string' && /^[a-zA-Z0-9_-]{43}$/.test(id);
 }
 
-// ✅ Droša URL validācija — baltā saraksta princips (SonarCloud atbilstība)
 function getValidatedManifestUrl(gatewayUrl, manifestId) {
     if (!isValidManifestId(manifestId)) {
         throw new Error('Nederīgs manifesta ID');
@@ -60,7 +55,6 @@ function getValidatedManifestUrl(gatewayUrl, manifestId) {
     return `${parsedUrl.origin}/raw/${encodeURIComponent(manifestId)}`;
 }
 
-// ✅ Droša kļūdas ziņojuma iegūšana — neielogo lietotāja datus
 function getSafeErrorMessage(error) {
     if (!error) return 'Nezināma kļūda';
     if (typeof error === 'string') return error.substring(0, 200);
@@ -84,6 +78,7 @@ function BackupPage() {
     const [isWorking, setIsWorking] = useState(false);
     const [backupCompleted, setBackupCompleted] = useState(false);
     const [backupFailed, setBackupFailed] = useState(false);
+    const [recoveryRequired, setRecoveryRequired] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
     const [queuePosition, setQueuePosition] = useState(null);
     
@@ -108,9 +103,8 @@ function BackupPage() {
     const [changedFilesForUpload, setChangedFilesForUpload] = useState([]);
     const [unchangedFilesForUpload, setUnchangedFilesForUpload] = useState({});
     const [preparedJobId, setPreparedJobId] = useState(null);
+    const [recoveredJobData, setRecoveredJobData] = useState(null);
 
-    // Saglabājam pašreizējā mēģinājuma progresu tikai atmiņā, lai kļūmes gadījumā
-    // neradītu jaunu ZIP ar citu IV/MK un varētu turpināt jau augšupielādēto darbu.
     const masterKeyRef = useRef(null);
     const uploadedZipRef = useRef({ txId: null, iv: null, merkleRoot: null });
     const uploadedManifestRef = useRef({ txId: null, manifest: null });
@@ -281,7 +275,7 @@ function BackupPage() {
         }
     }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
-    // ✅ NDJSON lasīšana no servera + browser reload recovery
+    // ✅ Init ar browser reload recovery
     useEffect(() => {
         let cancelled = false;
         let reader = null;
@@ -346,7 +340,103 @@ function BackupPage() {
                     }
                 }
 
-                // ✅ NDJSON streaming no servera
+                // ✅ Browser reload recovery
+                const storedJobId = localStorage.getItem(`permrepo-job-${repoName}`);
+
+                if (storedJobId) {
+                    try {
+                        const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
+
+                        if (jobStatus.success) {
+                            // ✅ Job atrasts — recovery
+                            setPreparedJobId(jobStatus.jobId);
+                            setNftInfo({
+                                tokenId: jobStatus.tokenId,
+                                backupCount: jobStatus.backupCount || null,
+                                lastManifest: jobStatus.manifestURI || null,
+                                lastMerkleRoot: jobStatus.merkleRoot || null
+                            });
+
+                            // Saglabā recovery datus
+                            setRecoveredJobData(jobStatus);
+
+                            // Ja jau completed
+                            if (jobStatus.status === 'completed') {
+                                setLastManifestTxId(jobStatus.manifestTxId);
+                                setBackupCompleted(true);
+                                setStatus(t('backup-complete'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                return;
+                            }
+
+                            // Ja blockchain-finalizing ar backupTxHash — recovery
+                            if (
+                                jobStatus.status === 'blockchain-finalizing' &&
+                                jobStatus.backupTxHash
+                            ) {
+                                setStatus(t('checking-blockchain-tx'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+
+                                // Mēģina pabeigt recovery
+                                try {
+                                    await apiJson('/api/complete-backup', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            jobId: jobStatus.jobId,
+                                            txHash: jobStatus.backupTxHash
+                                        })
+                                    });
+
+                                    setLastManifestTxId(jobStatus.manifestTxId);
+                                    setBackupCompleted(true);
+                                    setStatus(t('backup-complete'));
+                                    localStorage.removeItem(`permrepo-job-${repoName}`);
+                                    return;
+                                } catch (recoveryError) {
+                                    // Recovery neizdevās — rāda recovery required
+                                    setRecoveryRequired(true);
+                                    setStatus(t('recovery-required'));
+                                    setError(getSafeErrorMessage(recoveryError));
+                                    return;
+                                }
+                            }
+
+                            // Ja failed — rāda retry
+                            if (jobStatus.status === 'failed') {
+                                setBackupFailed(true);
+                                setStatus(t('backup-failed'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                return;
+                            }
+
+                            // Ja zip-uploaded / manifest-uploaded — turpina no šī stāvokļa
+                            if (
+                                jobStatus.status === 'zip-uploaded' ||
+                                jobStatus.status === 'manifest-uploaded'
+                            ) {
+                                setStatus(t('recovery-ready'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                return;
+                            }
+
+                            // Ja zip-uploading / manifest-uploading — turpina
+                            if (
+                                jobStatus.status === 'zip-uploading' ||
+                                jobStatus.status === 'manifest-uploading'
+                            ) {
+                                setStatus(t('recovery-ready'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                return;
+                            }
+                        }
+                    } catch (recoveryError) {
+                        // Job nav atrasts — notīra localStorage
+                        localStorage.removeItem(`permrepo-job-${repoName}`);
+                    }
+                }
+
+                // ✅ Ja nav recovery — sāk jaunu backup
                 const response = await fetch('/api/prepare-backup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -359,9 +449,7 @@ function BackupPage() {
                     try {
                         const errorData = await response.json();
                         errorMessage = errorData.error || errorMessage;
-                    } catch {
-                        // Nav JSON
-                    }
+                    } catch {}
                     throw new Error(errorMessage);
                 }
 
@@ -416,7 +504,7 @@ function BackupPage() {
                                     lastMerkleRoot: parsed.lastMerkleRoot || null
                                 });
                                 setPreparedJobId(parsed.jobId);
-                                // ✅ Saglabā jobId localStorage (browser reload recovery)
+                                // ✅ Saglabā jobId localStorage
                                 try {
                                     localStorage.setItem(
                                         `permrepo-job-${repoName}`,
@@ -447,7 +535,7 @@ function BackupPage() {
                     throw new Error(t('backup-session-invalid'));
                 }
 
-                // ✅ Ielādē iepriekšējo manifestu
+                // Ielādē iepriekšējo manifestu
                 let previousPaths = {};
                 let previousHistory = [];
                 let previousEncryptionIVs = {};
@@ -479,7 +567,6 @@ function BackupPage() {
                     }
                 }
 
-                // ✅ Nosaka mainītos un nemainītos failus
                 const changedFiles = [];
                 const unchangedFiles = {};
 
@@ -501,7 +588,6 @@ function BackupPage() {
                 setChangedFilesForUpload(changedFiles);
                 setUnchangedFilesForUpload(unchangedFiles);
                 
-                // ✅ Notīra statusu pēc ielādes
                 setStatus('');
                 setLastStatusData(null);
             } catch (e) {
@@ -532,7 +618,7 @@ function BackupPage() {
             return;
         }
         
-        if (changedFilesForUpload.length === 0) {
+        if (changedFilesForUpload.length === 0 && !recoveredJobData) {
             setStatus(t('no-changes'));
             setLastStatusData({ type: 'simple', key: 'no-changes' });
             return;
@@ -542,6 +628,7 @@ function BackupPage() {
             setIsWorking(true);
             setError('');
             setBackupFailed(false);
+            setRecoveryRequired(false);
             
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
             
@@ -559,11 +646,7 @@ function BackupPage() {
                                 chainId: config.chainId,
                                 chainName: 'Base',
                                 rpcUrls: [config.rpcUrl],
-                                nativeCurrency: {
-                                    name: 'ETH',
-                                    symbol: 'ETH',
-                                    decimals: 18
-                                }
+                                nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }
                             }]
                         });
                     } else {
@@ -624,17 +707,9 @@ function BackupPage() {
             setIsWorking(false);
         }
     }, [
-        config,
-        userAddress,
-        nftInfo.backupCount,
-        repoName,
-        t,
-        changedFilesForUpload,
-        unchangedFilesForUpload,
-        preparedJobId,
-        showMasterKey,
-        promptMasterKey,
-        isValidMasterKey
+        config, userAddress, nftInfo.backupCount, repoName, t,
+        changedFilesForUpload, unchangedFilesForUpload, preparedJobId,
+        showMasterKey, promptMasterKey, isValidMasterKey, recoveredJobData
     ]);
 
     const uploadZip = useCallback(async (
@@ -654,11 +729,19 @@ function BackupPage() {
         setLastStatusData({ type: 'simple', key: 'creating-zip' });
 
         try {
-            let zipTxId = uploadedZipRef.current.txId;
+            let zipTxId = uploadedZipRef.current.txId || recoveredJobData?.zipTxId;
             let iv = uploadedZipRef.current.iv;
             let merkleRoot = uploadedZipRef.current.merkleRoot;
 
-            if (!zipTxId) {
+            // ✅ Ja ZIP jau ir augšupielādēts (recovery), izmanto to
+            if (zipTxId) {
+                // Sinhronizē ar serveri
+                await apiJson('/api/save-zip-tx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId, zipTxId })
+                });
+            } else {
                 // ✅ 1. Sāk ZIP augšupielādi serverī
                 await apiJson('/api/start-zip-upload', {
                     method: 'POST',
@@ -703,10 +786,7 @@ function BackupPage() {
                 setStatus(t('uploading'));
                 setLastStatusData({ type: 'uploading' });
 
-                const zipBlob = new Blob(
-                    [encryptedZipData],
-                    { type: 'application/zip' }
-                );
+                const zipBlob = new Blob([encryptedZipData], { type: 'application/zip' });
 
                 const zipResult = await client.uploadFile({
                     fileStreamFactory: () => zipBlob.stream(),
@@ -731,20 +811,9 @@ function BackupPage() {
                 }
 
                 zipTxId = zipResult.id;
-                uploadedZipRef.current = {
-                    txId: zipTxId,
-                    iv,
-                    merkleRoot
-                };
+                uploadedZipRef.current = { txId: zipTxId, iv, merkleRoot };
 
                 // ✅ 2. Saglabā ZIP tx ID serverī
-                await apiJson('/api/save-zip-tx', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jobId, zipTxId })
-                });
-            } else {
-                // Ja ZIP jau bija augšupielādēts, serverim atkārtoti saglabājam to pašu ID.
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -756,10 +825,18 @@ function BackupPage() {
             setLastStatusData({ type: 'simple', key: 'manifest-ready' });
 
             let manifest = uploadedManifestRef.current.manifest;
-            let manifestTxId = uploadedManifestRef.current.txId;
+            let manifestTxId = uploadedManifestRef.current.txId || recoveredJobData?.manifestTxId;
 
-            if (!manifestTxId) {
-                // ✅ 3. Sāk manifesta augšupielādi serverī
+            // ✅ Ja manifests jau ir (recovery), izmanto to
+            if (manifestTxId && recoveredJobData?.manifest) {
+                manifest = recoveredJobData.manifest;
+                await apiJson('/api/save-manifest-tx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId, manifestTxId, manifest })
+                });
+            } else if (!manifestTxId) {
+                // ✅ 3. Sāk manifesta augšupielādi
                 await apiJson('/api/start-manifest-upload', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -770,30 +847,21 @@ function BackupPage() {
 
                 if (currentPreviousManifestId) {
                     const alreadyExists = history.some(
-                        entry =>
-                            entry &&
-                            entry.manifestId === currentPreviousManifestId
+                        entry => entry && entry.manifestId === currentPreviousManifestId
                     );
 
                     if (!alreadyExists) {
                         history.push({
-                            backupNumber:
-                                currentPreviousBackupNumber || history.length,
+                            backupNumber: currentPreviousBackupNumber || history.length,
                             manifestId: currentPreviousManifestId,
                             url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
                         });
                     }
                 }
 
-                history.sort(
-                    (a, b) =>
-                        Number(b?.backupNumber || 0) -
-                        Number(a?.backupNumber || 0)
-                );
+                history.sort((a, b) => Number(b?.backupNumber || 0) - Number(a?.backupNumber || 0));
 
-                const encryptionIVs = {
-                    ...currentPreviousEncryptionIVs
-                };
+                const encryptionIVs = { ...currentPreviousEncryptionIVs };
 
                 if (iv && iv.length === 12) {
                     encryptionIVs[zipTxId] = Array.from(iv);
@@ -802,9 +870,7 @@ function BackupPage() {
                 manifest = {
                     manifest: 'arweave/paths',
                     version: '0.2.0',
-                    encryption: {
-                        ivs: encryptionIVs
-                    },
+                    encryption: { ivs: encryptionIVs },
                     archive: {
                         id: zipTxId,
                         url: `/raw/${encodeURIComponent(zipTxId)}`,
@@ -818,35 +884,24 @@ function BackupPage() {
                 };
 
                 for (const file of changedFiles) {
-                    manifest.paths[file.path] = {
-                        id: zipTxId,
-                        hash: file.hash
-                    };
+                    manifest.paths[file.path] = { id: zipTxId, hash: file.hash };
                 }
 
                 for (const [filePath, info] of Object.entries(unchangedFiles)) {
-                    manifest.paths[filePath] = {
-                        id: info.id,
-                        hash: info.hash
-                    };
+                    manifest.paths[filePath] = { id: info.id, hash: info.hash };
                 }
 
                 const manifestPaths = Object.keys(manifest.paths);
 
                 if (manifestPaths.length > 0) {
                     manifest.index = {
-                        path: manifest.paths['README.md']
-                            ? 'README.md'
-                            : manifestPaths[0]
+                        path: manifest.paths['README.md'] ? 'README.md' : manifestPaths[0]
                     };
                 }
 
                 const manifestBlob = new Blob(
                     [JSON.stringify(manifest)],
-                    {
-                        type:
-                            'application/x.arweave-manifest+json'
-                    }
+                    { type: 'application/x.arweave-manifest+json' }
                 );
 
                 const manifestResult = await client.uploadFile({
@@ -854,32 +909,11 @@ function BackupPage() {
                     fileSizeFactory: () => manifestBlob.size,
                     dataItemOpts: {
                         tags: [
-                            {
-                                name: 'App-Name',
-                                value: 'PermRepo'
-                            },
-                            {
-                                name: 'Type',
-                                value: 'path-manifest'
-                            },
-                            {
-                                name: 'Repo',
-                                value: `${githubUser}/${repoName}`
-                            },
-                            {
-                                name: 'Content-Type',
-                                value:
-                                    'application/x.arweave-manifest+json'
-                            },
-                            {
-                                name: 'Unix-Time',
-                                value:
-                                    String(
-                                        Math.floor(
-                                            Date.now() / 1000
-                                        )
-                                    )
-                            }
+                            { name: 'App-Name', value: 'PermRepo' },
+                            { name: 'Type', value: 'path-manifest' },
+                            { name: 'Repo', value: `${githubUser}/${repoName}` },
+                            { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
                         ]
                     },
                     chunkByteCount: 5 * 1024 * 1024,
@@ -892,97 +926,40 @@ function BackupPage() {
                 }
 
                 manifestTxId = manifestResult.id;
-
-                uploadedManifestRef.current = {
-                    txId: manifestTxId,
-                    manifest
-                };
+                uploadedManifestRef.current = { txId: manifestTxId, manifest };
 
                 // ✅ 4. Saglabā manifesta tx ID serverī
                 await apiJson('/api/save-manifest-tx', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        jobId,
-                        manifestTxId,
-                        manifest
-                    })
-                });
-            } else {
-                await apiJson('/api/save-manifest-tx', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        jobId,
-                        manifestTxId,
-                        manifest
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId, manifestTxId, manifest })
                 });
             }
 
             setStatus(t('signing'));
-            setLastStatusData({
-                type: 'simple',
-                key: 'signing'
-            });
+            setLastStatusData({ type: 'simple', key: 'signing' });
 
-            const provider =
-                new ethers.BrowserProvider(window.ethereum);
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const accounts = await provider.send('eth_accounts', []);
 
-            const accounts = await provider.send(
-                'eth_accounts',
-                []
-            );
-
-            if (
-                !accounts[0] ||
-                accounts[0].toLowerCase() !==
-                    userAddress.toLowerCase()
-            ) {
+            if (!accounts[0] || accounts[0].toLowerCase() !== userAddress.toLowerCase()) {
                 throw new Error(t('wallet-changed'));
             }
 
-            const currentSigner =
-                await provider.getSigner();
-
-            const readContract = new ethers.Contract(
-                config.nftAddress,
-                NFT_ABI,
-                provider
-            );
-
+            const currentSigner = await provider.getSigner();
+            const readContract = new ethers.Contract(config.nftAddress, NFT_ABI, provider);
             const tokenId = BigInt(nftInfo.tokenId);
+            const owner = await readContract.ownerOf(tokenId);
 
-            const owner =
-                await readContract.ownerOf(tokenId);
-
-            if (
-                owner.toLowerCase() !==
-                userAddress.toLowerCase()
-            ) {
+            if (owner.toLowerCase() !== userAddress.toLowerCase()) {
                 throw new Error(t('nft-not-owned'));
             }
 
-            const deadline =
-                Math.floor(Date.now() / 1000) + 600;
-
-            const currentNonce =
-                await readContract.getNonce(tokenId);
-
-            const onChainBackupCount =
-                await readContract.getBackupCount(tokenId);
-
-            const manifestURI =
-                `ar://${manifestTxId}`;
-
-            const manifestHash =
-                ethers.keccak256(
-                    ethers.toUtf8Bytes(manifestURI)
-                );
+            const deadline = Math.floor(Date.now() / 1000) + 600;
+            const currentNonce = await readContract.getNonce(tokenId);
+            const onChainBackupCount = await readContract.getBackupCount(tokenId);
+            const manifestURI = `ar://${manifestTxId}`;
+            const manifestHash = ethers.keccak256(ethers.toUtf8Bytes(manifestURI));
 
             const domain = {
                 name: 'PermRepo',
@@ -993,76 +970,64 @@ function BackupPage() {
 
             const types = {
                 AddBackup: [
-                    {
-                        name: 'tokenId',
-                        type: 'uint256'
-                    },
-                    {
-                        name: 'backupNumber',
-                        type: 'uint256'
-                    },
-                    {
-                        name: 'manifestHash',
-                        type: 'bytes32'
-                    },
-                    {
-                        name: 'merkleRoot',
-                        type: 'bytes32'
-                    },
-                    {
-                        name: 'deadline',
-                        type: 'uint256'
-                    },
-                    {
-                        name: 'nonce',
-                        type: 'uint256'
-                    }
+                    { name: 'tokenId', type: 'uint256' },
+                    { name: 'backupNumber', type: 'uint256' },
+                    { name: 'manifestHash', type: 'bytes32' },
+                    { name: 'merkleRoot', type: 'bytes32' },
+                    { name: 'deadline', type: 'uint256' },
+                    { name: 'nonce', type: 'uint256' }
                 ]
             };
 
             const value = {
                 tokenId,
-                backupNumber:
-                    onChainBackupCount + 1n,
+                backupNumber: onChainBackupCount + 1n,
                 manifestHash,
                 merkleRoot,
                 deadline: BigInt(deadline),
                 nonce: currentNonce
             };
 
-            const signature =
-                await currentSigner.signTypedData(
-                    domain,
-                    types,
-                    value
-                );
+            const signature = await currentSigner.signTypedData(domain, types, value);
 
-            // ✅ 5. Sāk blockchain finalizāciju serverī
+            // ✅ 5. Sāk blockchain finalizāciju ar binding
             await apiJson('/api/start-blockchain-finalize', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jobId })
-            });
-
-            const nftWrite = new ethers.Contract(
-                config.nftAddress,
-                NFT_ABI,
-                currentSigner
-            );
-
-            const tx =
-                await nftWrite.addBackup(
-                    tokenId,
+                body: JSON.stringify({
+                    jobId,
+                    backupNumber: (onChainBackupCount + 1n).toString(),
                     manifestHash,
                     merkleRoot,
                     manifestURI,
-                    BigInt(deadline),
-                    signature
-                );
+                    deadline: deadline.toString()
+                })
+            });
+
+            const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, currentSigner);
+
+            const tx = await nftWrite.addBackup(
+                tokenId,
+                manifestHash,
+                merkleRoot,
+                manifestURI,
+                BigInt(deadline),
+                signature
+            );
+
+            // ✅ 6. Saglabā backup tx hash PIRMS tx.wait()
+            await apiJson('/api/save-backup-tx', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jobId,
+                    txHash: tx.hash
+                })
+            });
 
             await tx.wait();
 
-            // ✅ 6. Paziņo serverim par pabeigšanu ar blockchain binding
+            // ✅ 7. Complete backup
             let redisCompleted = false;
             try {
                 await apiJson('/api/complete-backup', {
@@ -1070,39 +1035,29 @@ function BackupPage() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         jobId,
-                        txHash: tx.hash,
-                        manifestHash,
-                        merkleRoot,
-                        backupNumber: (onChainBackupCount + 1n).toString()
+                        txHash: tx.hash
                     })
                 });
                 redisCompleted = true;
             } catch (completeError) {
-                console.error(
-                    'Neizdevās paziņot serverim par pabeigšanu:',
-                    completeError
-                );
+                console.error('Neizdevās paziņot serverim par pabeigšanu:', completeError);
             }
 
-            // ✅ Frontend ↔ Redis consistency
             if (!redisCompleted) {
                 setError(t('redis-completion-failed'));
-                setBackupFailed(true);
+                setRecoveryRequired(true);
                 setIsWorking(false);
                 return;
             }
 
-            // ✅ Notīra localStorage (job pabeigts)
+            // ✅ Notīra localStorage
             try {
                 localStorage.removeItem(`permrepo-job-${repoName}`);
             } catch {}
 
             setNftInfo({
                 tokenId: nftInfo.tokenId,
-                backupCount:
-                    (
-                        onChainBackupCount + 1n
-                    ).toString(),
+                backupCount: (onChainBackupCount + 1n).toString(),
                 lastManifest: manifestURI,
                 lastMerkleRoot: merkleRoot
             });
@@ -1110,13 +1065,12 @@ function BackupPage() {
             setLastManifestTxId(manifestTxId);
             setBackupCompleted(true);
             setStatus(t('backup-complete'));
-            setLastStatusData({
-                type: 'success',
-                key: 'backup-complete'
-            });
+            setLastStatusData({ type: 'success', key: 'backup-complete' });
         } catch (e) {
-            // ✅ Paziņo serverim par kļūdu
-            if (jobId) {
+            // ✅ Ja tx.hash jau ir saglabāts, NEDRĪKST saukt fail-backup
+            const txHashSaved = uploadedZipRef.current.txId && recoveredJobData?.backupTxHash;
+
+            if (!txHashSaved) {
                 try {
                     await apiJson('/api/fail-backup', {
                         method: 'POST',
@@ -1129,42 +1083,29 @@ function BackupPage() {
                 } catch {
                     // Ignorē
                 }
-            }
-            
-            setBackupFailed(true);
-
-            if (
-                e.code === 'ACTION_REJECTED' ||
-                e.code === 4001
-            ) {
-                setError(
-                    t('transaction-cancelled')
-                );
+                setBackupFailed(true);
             } else {
-                setError(
-                    getSafeErrorMessage(e)
-                );
+                setRecoveryRequired(true);
+                setStatus(t('recovery-required'));
+            }
+
+            if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
+                setError(t('transaction-cancelled'));
+            } else {
+                setError(getSafeErrorMessage(e));
             }
         } finally {
             setIsWorking(false);
         }
     }, [
-        apiJson,
-        t,
-        githubUser,
-        repoName,
-        config,
-        currentPreviousHistory,
-        currentPreviousManifestId,
-        currentPreviousBackupNumber,
-        currentPreviousEncryptionIVs,
-        nftInfo.tokenId,
-        calculateMerkleRoot,
-        encryptData,
-        userAddress
+        apiJson, t, githubUser, repoName, config,
+        currentPreviousHistory, currentPreviousManifestId,
+        currentPreviousBackupNumber, currentPreviousEncryptionIVs,
+        nftInfo.tokenId, calculateMerkleRoot, encryptData,
+        userAddress, recoveredJobData
     ]);
 
-    // ✅ Retry no failed state
+    // ✅ Retry
     const retryBackup = useCallback(async () => {
         if (!preparedJobId) {
             setError(t('backup-session-invalid'));
@@ -1175,6 +1116,7 @@ function BackupPage() {
             setIsWorking(true);
             setError('');
             setBackupFailed(false);
+            setRecoveryRequired(false);
 
             await apiJson('/api/retry-backup', {
                 method: 'POST',
@@ -1182,7 +1124,6 @@ function BackupPage() {
                 body: JSON.stringify({ jobId: preparedJobId })
             });
 
-            // ✅ Notīra iepriekšējo progresu
             uploadedZipRef.current = { txId: null, iv: null, merkleRoot: null };
             uploadedManifestRef.current = { txId: null, manifest: null };
 
@@ -1195,15 +1136,45 @@ function BackupPage() {
         }
     }, [preparedJobId, apiJson, t]);
 
+    // ✅ Recovery — pabeidz backup ar jau iesniegto tx
+    const recoverBackup = useCallback(async () => {
+        if (!recoveredJobData?.backupTxHash) {
+            setError(t('no-backup-tx'));
+            return;
+        }
+
+        try {
+            setIsWorking(true);
+            setError('');
+
+            await apiJson('/api/complete-backup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jobId: recoveredJobData.jobId,
+                    txHash: recoveredJobData.backupTxHash
+                })
+            });
+
+            try {
+                localStorage.removeItem(`permrepo-job-${repoName}`);
+            } catch {}
+
+            setLastManifestTxId(recoveredJobData.manifestTxId);
+            setBackupCompleted(true);
+            setStatus(t('backup-complete'));
+            setLastStatusData({ type: 'success', key: 'backup-complete' });
+            setIsWorking(false);
+        } catch (e) {
+            setError(getSafeErrorMessage(e));
+            setIsWorking(false);
+        }
+    }, [recoveredJobData, apiJson, t, repoName]);
+
     if (!config) {
         return (
             <div className="container">
-                <div
-                    style={{
-                        textAlign: 'center',
-                        padding: '20px'
-                    }}
-                >
+                <div style={{ textAlign: 'center', padding: '20px' }}>
                     <div className="spinner"></div>
                 </div>
             </div>
@@ -1211,147 +1182,74 @@ function BackupPage() {
     }
 
     const finalManifestUrl = lastManifestTxId
-        ? getValidatedManifestUrl(
-              config.arweaveGateway,
-              lastManifestTxId
-          )
+        ? getValidatedManifestUrl(config.arweaveGateway, lastManifestTxId)
         : null;
 
     return (
         <div className="container">
             <div className="language-selector">
-                <button
-                    className={`lang-btn ${
-                        currentLanguage === 'lv'
-                            ? 'active'
-                            : ''
-                    }`}
-                    onClick={() =>
-                        switchLanguage('lv')
-                    }
-                >
-                    LV
-                </button>
-
-                <button
-                    className={`lang-btn ${
-                        currentLanguage === 'en'
-                            ? 'active'
-                            : ''
-                    }`}
-                    onClick={() =>
-                        switchLanguage('en')
-                    }
-                >
-                    EN
-                </button>
-
-                <button
-                    className={`lang-btn ${
-                        currentLanguage === 'eo'
-                            ? 'active'
-                            : ''
-                    }`}
-                    onClick={() =>
-                        switchLanguage('eo')
-                    }
-                >
-                    EO
-                </button>
+                <button className={`lang-btn ${currentLanguage === 'lv' ? 'active' : ''}`} onClick={() => switchLanguage('lv')}>LV</button>
+                <button className={`lang-btn ${currentLanguage === 'en' ? 'active' : ''}`} onClick={() => switchLanguage('en')}>EN</button>
+                <button className={`lang-btn ${currentLanguage === 'eo' ? 'active' : ''}`} onClick={() => switchLanguage('eo')}>EO</button>
             </div>
             
-            <img
-                src="/icons/logo-nosaukums.svg"
-                alt="PermRepo"
-                className="logo-title"
-            />
-
-            <p className="subtitle">
-                {t('repo-label')}: {repoName || '-'}
-            </p>
+            <img src="/icons/logo-nosaukums.svg" alt="PermRepo" className="logo-title" />
+            <p className="subtitle">{t('repo-label')}: {repoName || '-'}</p>
             
             <div className="info-row text-left">
-                <span className="info-label">
-                    {t('nft-token')}
-                </span>
-                <span className="info-value">
-                    {nftInfo.tokenId || '-'}
-                </span>
+                <span className="info-label">{t('nft-token')}</span>
+                <span className="info-value">{nftInfo.tokenId || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">
-                    {t('backup-count')}
-                </span>
-                <span className="info-value">
-                    {nftInfo.backupCount || '-'}
-                </span>
+                <span className="info-label">{t('backup-count')}</span>
+                <span className="info-value">{nftInfo.backupCount || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">
-                    {t('last-manifest')}
-                </span>
-                <span className="info-value">
-                    {nftInfo.lastManifest || '-'}
-                </span>
+                <span className="info-label">{t('last-manifest')}</span>
+                <span className="info-value">{nftInfo.lastManifest || '-'}</span>
             </div>
             
             <div className="info-row text-left">
-                <span className="info-label">
-                    {t('last-merkle')}
-                </span>
-                <span className="info-value">
-                    {nftInfo.lastMerkleRoot || '-'}
-                </span>
+                <span className="info-label">{t('last-merkle')}</span>
+                <span className="info-value">{nftInfo.lastMerkleRoot || '-'}</span>
             </div>
             
-            {/* ✅ FAILU INFO RINDIŅĀ AR IKONU KOMPONENTI */}
             {fileInfo.loading ? (
-                <div
-                    style={{
-                        textAlign: 'center',
-                        padding: '20px'
-                    }}
-                >
+                <div style={{ textAlign: 'center', padding: '20px' }}>
                     <div className="spinner"></div>
                 </div>
             ) : (
                 <>
-                    <div
-                        style={{
-                            padding: '8px 0',
-                            borderBottom:
-                                '1px solid rgba(255,255,255,0.08)'
-                        }}
-                    >
+                    <div style={{ padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                         <Icon name="fails" />
-                        {' '}
-                        {t('files-count')}:{' '}
-                        <strong>
-                            {fileInfo.count}
-                        </strong>
+                        {' '}{t('files-count')}: <strong>{fileInfo.count}</strong>
                     </div>
-
-                    <div
-                        style={{
-                            padding: '8px 0',
-                            borderBottom:
-                                '1px solid rgba(255,255,255,0.08)'
-                        }}
-                    >
+                    <div style={{ padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                         <Icon name="fails" />
-                        {' '}
-                        {t('files-size')}:{' '}
-                        <strong>
-                            {fileInfo.sizeText}
-                        </strong>
+                        {' '}{t('files-size')}: <strong>{fileInfo.sizeText}</strong>
                     </div>
                 </>
             )}
             
-            {/* ✅ Retry poga, ja failed */}
-            {backupFailed && !backupCompleted ? (
+            {/* ✅ Recovery poga, ja blockchain tx eksistē */}
+            {recoveryRequired && recoveredJobData?.backupTxHash ? (
+                <button 
+                    onClick={recoverBackup}
+                    disabled={isWorking}
+                    className="sign-button"
+                    style={{ marginTop: '20px', background: 'linear-gradient(135deg, #f0ad4e 0%, #d98b3a 100%)' }}
+                >
+                    {isWorking ? (
+                        <div style={{ textAlign: 'center' }}>
+                            <div className="spinner"></div>
+                        </div>
+                    ) : (
+                        t('recover-backup')
+                    )}
+                </button>
+            ) : backupFailed && !backupCompleted ? (
                 <button 
                     onClick={retryBackup}
                     disabled={isWorking}
@@ -1369,20 +1267,12 @@ function BackupPage() {
             ) : !backupCompleted ? (
                 <button 
                     onClick={continueBackup}
-                    disabled={
-                        isWorking ||
-                        fileInfo.loading ||
-                        fileInfo.count === 0
-                    }
+                    disabled={isWorking || fileInfo.loading || (fileInfo.count === 0 && !recoveredJobData)}
                     className="sign-button"
                     style={{ marginTop: '20px' }}
                 >
                     {isWorking ? (
-                        <div
-                            style={{
-                                textAlign: 'center'
-                            }}
-                        >
+                        <div style={{ textAlign: 'center' }}>
                             <div className="spinner"></div>
                         </div>
                     ) : (
@@ -1400,56 +1290,28 @@ function BackupPage() {
             )}
             
             {status && (
-                <div
-                    className="status-card"
-                    style={{ display: 'block' }}
-                >
-                    <div
-                        style={{
-                            whiteSpace: 'pre-wrap'
-                        }}
-                    >
-                        <Icon
-                            name={
-                                lastStatusData?.type ===
-                                'success'
-                                    ? 'izdevas-veiksmigi'
-                                    : lastStatusData?.type === 'queued'
-                                        ? 'upload'
-                                        : 'upload'
-                            }
-                        />
-                        {' '}
-                        {status}
+                <div className="status-card" style={{ display: 'block' }}>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>
+                        <Icon name={lastStatusData?.type === 'success' ? 'izdevas-veiksmigi' : 'upload'} />
+                        {' '}{status}
                     </div>
 
-                    {backupCompleted &&
-                        lastManifestTxId && (
-                            <div
-                                style={{
-                                    marginTop: '12px'
-                                }}
-                            >
-                                <Icon name="manifests" />
-                                {' '}
-                                {t('manifest-link')}:{' '}
-                                <a 
-                                    href={finalManifestUrl} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                >
-                                    ar://{lastManifestTxId}
-                                </a>
-                            </div>
-                        )}
+                    {backupCompleted && lastManifestTxId && (
+                        <div style={{ marginTop: '12px' }}>
+                            <Icon name="manifests" />
+                            {' '}{t('manifest-link')}:{' '}
+                            <a href={finalManifestUrl} target="_blank" rel="noopener noreferrer">
+                                ar://{lastManifestTxId}
+                            </a>
+                        </div>
+                    )}
                 </div>
             )}
             
             {error && (
                 <div className="error">
                     <Icon name="kluda" />
-                    {' '}
-                    {error}
+                    {' '}{error}
                 </div>
             )}
         </div>
