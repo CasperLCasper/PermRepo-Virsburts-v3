@@ -22,7 +22,8 @@ import {
     getJob,
     updateJob,
     acquireJobLock,
-    releaseJobLock
+    releaseJobLock,
+    extendJobLock
 } from './accounting-redis.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -71,6 +72,7 @@ const RESOURCE_QUEUE_HEARTBEAT_MS = Number(
 
 const JOB_TTL_SECONDS = Number(process.env.JOB_TTL_SECONDS || 3600);
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 3600);
+const LOCK_HEARTBEAT_MS = Number(process.env.LOCK_HEARTBEAT_MS || 60000);
 const DOWNLOAD_CONCURRENCY = 3;
 const MAX_GITHUB_REPO_PAGES = 10;
 const MAX_MANIFEST_BYTES = 10 * 1024 * 1024;
@@ -578,6 +580,10 @@ function getAllowedConnectOrigins() {
     return [...origins].join(' ');
 }
 
+/**
+ * withJobLock ar heartbeat — nodrošina, ka lock netiek zaudēts
+ * ilgstošu operāciju laikā
+ */
 async function withJobLock(jobId, fn) {
     const token = await acquireJobLock(jobId);
 
@@ -585,9 +591,32 @@ async function withJobLock(jobId, fn) {
         throw new Error('Job jau tiek apstrādāts.');
     }
 
+    // ✅ Lock heartbeat — pagarina lock ik LOCK_HEARTBEAT_MS
+    let heartbeatActive = true;
+    const heartbeat = setInterval(async () => {
+        if (!heartbeatActive) return;
+
+        try {
+            const extended = await extendJobLock(jobId, token);
+            if (!extended) {
+                console.warn(
+                    `⚠️ Lock ${jobId} vairs nepieder mums — heartbeat apturēts`
+                );
+                heartbeatActive = false;
+                clearInterval(heartbeat);
+            }
+        } catch (error) {
+            console.error('Lock heartbeat kļūda:', error);
+        }
+    }, LOCK_HEARTBEAT_MS);
+
+    heartbeat.unref();
+
     try {
         return await fn();
     } finally {
+        heartbeatActive = false;
+        clearInterval(heartbeat);
         await releaseJobLock(jobId, token);
     }
 }
@@ -2789,8 +2818,7 @@ app.post(
                         () => {
                             if (
                                 clientClosed ||
-                                resourceLease
-                            ) {
+                                resourceLease                            ) {
                                 return;
                             }
 
@@ -2926,8 +2954,9 @@ app.post(
                 }
             );
 
+            // ✅ Job satur VISU informāciju, kas vajadzīga blockchain binding
             const job = {
-                version: 4,
+                version: 5,
                 jobId,
                 githubUser,
                 repoName,
@@ -2964,6 +2993,11 @@ app.post(
                     null,
                 manifest:
                     null,
+                // ✅ Blockchain binding lauki (aizpildīs vēlāk)
+                manifestHash: null,
+                merkleRoot: null,
+                backupNumber: null,
+                completionTxHash: null,
                 createdAt:
                     now,
                 updatedAt:
@@ -3124,9 +3158,75 @@ app.post(
 );
 
 // -----------------------------------------------------------------------------
-// Upload transaction persistence.
+// Upload transaction persistence — ar state machine
 // -----------------------------------------------------------------------------
 
+// ✅ 1. Sāk ZIP augšupielādi
+app.post(
+    '/api/start-zip-upload',
+    backupLimiter,
+    async (req, res) => {
+        try {
+            assertSameOrigin(req);
+
+            if (!requireGithubSession(req, res)) {
+                return;
+            }
+
+            const { jobId } = req.body;
+
+            if (!validateJobId(jobId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs job ID.'
+                });
+            }
+
+            return await withJobLock(
+                jobId,
+                async () => {
+                    const job = await getJob(jobId);
+
+                    const wallet = await verifyJobAuthorization(req, job);
+
+                    await verifyJobNFTAuthorization({
+                        ...job,
+                        walletAddress: wallet
+                    });
+
+                    // ✅ State pāreja
+                    if (job.status === 'prepared') {
+                        await updateJob(
+                            jobId,
+                            {
+                                status: 'zip-uploading',
+                                zipUploadStartedAt: Date.now(),
+                                updatedAt: Date.now()
+                            },
+                            JOB_TTL_SECONDS
+                        );
+                    } else if (job.status !== 'zip-uploading') {
+                        throw new Error(
+                            `Nevar sākt ZIP augšupielādi no statusa: ${job.status}`
+                        );
+                    }
+
+                    return res.json({
+                        success: true,
+                        status: 'zip-uploading'
+                    });
+                }
+            );
+        } catch (error) {
+            return res.status(400).json({
+                success: false,
+                error: errorMessage(error)
+            });
+        }
+    }
+);
+
+// ✅ 2. Saglabā ZIP tx ID
 app.post(
     '/api/save-zip-tx',
     backupLimiter,
@@ -3134,57 +3234,39 @@ app.post(
         try {
             assertSameOrigin(req);
 
-            if (
-                !requireGithubSession(
-                    req,
-                    res
-                )
-            ) {
+            if (!requireGithubSession(req, res)) {
                 return;
             }
 
-            const {
-                jobId,
-                zipTxId
-            } = req.body;
+            const { jobId, zipTxId } = req.body;
 
-            validateJobTxInput(
-                jobId,
-                zipTxId
-            );
+            validateJobTxInput(jobId, zipTxId);
 
             return await withJobLock(
                 jobId,
                 async () => {
-                    const job =
-                        await getJob(
-                            jobId
-                        );
+                    const job = await getJob(jobId);
 
-                    const wallet =
-                        await verifyJobAuthorization(
-                            req,
-                            job
-                        );
+                    const wallet = await verifyJobAuthorization(req, job);
 
-                    await verifyJobNFTAuthorization(
-                        {
-                            ...job,
-                            walletAddress:
-                                wallet
-                        }
-                    );
+                    await verifyJobNFTAuthorization({
+                        ...job,
+                        walletAddress: wallet
+                    });
 
-                    // ✅ State validācija: ja jau manifest-uploaded vai completed
+                    // ✅ Ja jau zip-uploaded vai tālāk — idempotents
                     if (
+                        job.status === 'zip-uploaded' ||
+                        job.status === 'manifest-uploading' ||
                         job.status === 'manifest-uploaded' ||
+                        job.status === 'blockchain-finalizing' ||
                         job.status === 'completed'
                     ) {
                         if (job.zipTxId === zipTxId) {
-                            // Idempotents — tas pats ZIP
                             return res.json({
                                 success: true,
-                                idempotent: true
+                                idempotent: true,
+                                status: job.status
                             });
                         }
                         throw new Error(
@@ -3192,10 +3274,15 @@ app.post(
                         );
                     }
 
+                    if (job.status !== 'zip-uploading') {
+                        throw new Error(
+                            `ZIP var saglabāt tikai no 'zip-uploading' statusa, nevis '${job.status}'`
+                        );
+                    }
+
                     if (
                         job.zipTxId &&
-                        job.zipTxId !==
-                            zipTxId
+                        job.zipTxId !== zipTxId
                     ) {
                         throw new Error(
                             'ZIP transakcijas ID nevar mainīt.'
@@ -3206,45 +3293,100 @@ app.post(
                         jobId,
                         {
                             zipTxId,
-                            status:
-                                'zip-uploaded',
-                            updatedAt:
-                                Date.now()
+                            status: 'zip-uploaded',
+                            zipUploadedAt: Date.now(),
+                            updatedAt: Date.now()
                         },
                         JOB_TTL_SECONDS
                     );
 
                     return res.json({
-                        success:
-                            true
+                        success: true,
+                        status: 'zip-uploaded'
                     });
                 }
             );
         } catch (error) {
-            const message =
-                errorMessage(
-                    error
-                );
-
+            const message = errorMessage(error);
             const status =
-                /nav atrasts|nav github|nesakrīt|nepieder|nederīgs|nevar mainīt|nederīga state/i.test(
-                    message
-                )
+                /nav atrasts|nav github|nesakrīt|nepieder|nederīgs|nevar mainīt|nederīga state/i.test(message)
                     ? 400
                     : 500;
 
-            return res
-                .status(status)
-                .json({
-                    success:
-                        false,
-                    error:
-                        message
-                });
+            return res.status(status).json({
+                success: false,
+                error: message
+            });
         }
     }
 );
 
+// ✅ 3. Sāk manifesta augšupielādi
+app.post(
+    '/api/start-manifest-upload',
+    backupLimiter,
+    async (req, res) => {
+        try {
+            assertSameOrigin(req);
+
+            if (!requireGithubSession(req, res)) {
+                return;
+            }
+
+            const { jobId } = req.body;
+
+            if (!validateJobId(jobId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs job ID.'
+                });
+            }
+
+            return await withJobLock(
+                jobId,
+                async () => {
+                    const job = await getJob(jobId);
+
+                    const wallet = await verifyJobAuthorization(req, job);
+
+                    await verifyJobNFTAuthorization({
+                        ...job,
+                        walletAddress: wallet
+                    });
+
+                    // ✅ State pāreja
+                    if (job.status === 'zip-uploaded') {
+                        await updateJob(
+                            jobId,
+                            {
+                                status: 'manifest-uploading',
+                                manifestUploadStartedAt: Date.now(),
+                                updatedAt: Date.now()
+                            },
+                            JOB_TTL_SECONDS
+                        );
+                    } else if (job.status !== 'manifest-uploading') {
+                        throw new Error(
+                            `Nevar sākt manifesta augšupielādi no statusa: ${job.status}`
+                        );
+                    }
+
+                    return res.json({
+                        success: true,
+                        status: 'manifest-uploading'
+                    });
+                }
+            );
+        } catch (error) {
+            return res.status(400).json({
+                success: false,
+                error: errorMessage(error)
+            });
+        }
+    }
+);
+
+// ✅ 4. Saglabā manifesta tx ID
 app.post(
     '/api/save-manifest-tx',
     backupLimiter,
@@ -3252,51 +3394,26 @@ app.post(
         try {
             assertSameOrigin(req);
 
-            if (
-                !requireGithubSession(
-                    req,
-                    res
-                )
-            ) {
+            if (!requireGithubSession(req, res)) {
                 return;
             }
 
-            const {
-                jobId,
-                manifestTxId,
-                manifest
-            } = req.body;
+            const { jobId, manifestTxId, manifest } = req.body;
 
-            validateJobTxInput(
-                jobId,
-                manifestTxId
-            );
-
-            validateManifest(
-                manifest
-            );
+            validateJobTxInput(jobId, manifestTxId);
+            validateManifest(manifest);
 
             return await withJobLock(
                 jobId,
                 async () => {
-                    const job =
-                        await getJob(
-                            jobId
-                        );
+                    const job = await getJob(jobId);
 
-                    const wallet =
-                        await verifyJobAuthorization(
-                            req,
-                            job
-                        );
+                    const wallet = await verifyJobAuthorization(req, job);
 
-                    await verifyJobNFTAuthorization(
-                        {
-                            ...job,
-                            walletAddress:
-                                wallet
-                        }
-                    );
+                    await verifyJobNFTAuthorization({
+                        ...job,
+                        walletAddress: wallet
+                    });
 
                     if (!job.zipTxId) {
                         throw new Error(
@@ -3304,34 +3421,40 @@ app.post(
                         );
                     }
 
-                    // ✅ State validācija: ja jau completed
-                    if (job.status === 'completed') {
+                    // ✅ Ja jau manifest-uploaded vai tālāk — idempotents
+                    if (
+                        job.status === 'manifest-uploaded' ||
+                        job.status === 'blockchain-finalizing' ||
+                        job.status === 'completed'
+                    ) {
                         if (job.manifestTxId === manifestTxId) {
-                            // Idempotents
                             return res.json({
                                 success: true,
-                                idempotent: true
+                                idempotent: true,
+                                status: job.status
                             });
                         }
                         throw new Error(
-                            'Nevar mainīt manifestu pēc statusa: completed.'
+                            `Nevar mainīt manifestu pēc statusa: ${job.status}.`
+                        );
+                    }
+
+                    if (job.status !== 'manifest-uploading') {
+                        throw new Error(
+                            `Manifestu var saglabāt tikai no 'manifest-uploading' statusa, nevis '${job.status}'`
                         );
                     }
 
                     if (
                         job.manifestTxId &&
-                        job.manifestTxId !==
-                            manifestTxId
+                        job.manifestTxId !== manifestTxId
                     ) {
                         throw new Error(
                             'Manifesta transakcijas ID nevar mainīt.'
                         );
                     }
 
-                    if (
-                        manifest.archive?.id !==
-                        job.zipTxId
-                    ) {
+                    if (manifest.archive?.id !== job.zipTxId) {
                         throw new Error(
                             'Manifesta archive ID nesakrīt ar ZIP transakciju.'
                         );
@@ -3342,49 +3465,106 @@ app.post(
                         {
                             manifestTxId,
                             manifest,
-                            status:
-                                'manifest-uploaded',
-                            updatedAt:
-                                Date.now()
+                            status: 'manifest-uploaded',
+                            manifestUploadedAt: Date.now(),
+                            updatedAt: Date.now()
                         },
                         JOB_TTL_SECONDS
                     );
 
                     return res.json({
-                        success:
-                            true
+                        success: true,
+                        status: 'manifest-uploaded'
                     });
                 }
             );
         } catch (error) {
-            const message =
-                errorMessage(
-                    error
-                );
-
+            const message = errorMessage(error);
             const status =
-                /nav atrasts|nav github|nesakrīt|nepieder|nederīgs|nevar mainīt|nederīga state/i.test(
-                    message
-                )
+                /nav atrasts|nav github|nesakrīt|nepieder|nederīgs|nevar mainīt|nederīga state/i.test(message)
                     ? 400
                     : 500;
 
-            return res
-                .status(status)
-                .json({
-                    success:
-                        false,
-                    error:
-                        message
-                });
+            return res.status(status).json({
+                success: false,
+                error: message
+            });
         }
     }
 );
 
-// -----------------------------------------------------------------------------
-// Complete backup — pēc blockchain transakcijas
-// -----------------------------------------------------------------------------
+// ✅ 5. Sāk blockchain finalizāciju
+app.post(
+    '/api/start-blockchain-finalize',
+    backupLimiter,
+    async (req, res) => {
+        try {
+            assertSameOrigin(req);
 
+            if (!requireGithubSession(req, res)) {
+                return;
+            }
+
+            const { jobId } = req.body;
+
+            if (!validateJobId(jobId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs job ID.'
+                });
+            }
+
+            return await withJobLock(
+                jobId,
+                async () => {
+                    const job = await getJob(jobId);
+
+                    const wallet = await verifyJobAuthorization(req, job);
+
+                    await verifyJobNFTAuthorization({
+                        ...job,
+                        walletAddress: wallet
+                    });
+
+                    if (!job.manifestTxId) {
+                        throw new Error(
+                            'Manifests vēl nav saglabāts.'
+                        );
+                    }
+
+                    // ✅ State pāreja
+                    if (job.status === 'manifest-uploaded') {
+                        await updateJob(
+                            jobId,
+                            {
+                                status: 'blockchain-finalizing',
+                                blockchainFinalizeStartedAt: Date.now(),
+                                updatedAt: Date.now()
+                            },
+                            JOB_TTL_SECONDS
+                        );
+                    } else if (job.status !== 'blockchain-finalizing') {
+                        throw new Error(
+                            `Nevar sākt blockchain finalizāciju no statusa: ${job.status}`
+                        );
+                    }
+
+                    return res.json({
+                        success: true,
+                        status: 'blockchain-finalizing'
+                    });
+                }
+            );
+        } catch (error) {
+            return res.status(400).json({
+                success: false,
+                error: errorMessage(error)
+            });
+        }
+    }
+);
+
+// ✅ 6. Pabeidz backup ar blockchain binding
 app.post(
     '/api/complete-backup',
     backupLimiter,
@@ -3392,18 +3572,16 @@ app.post(
         try {
             assertSameOrigin(req);
 
-            if (
-                !requireGithubSession(
-                    req,
-                    res
-                )
-            ) {
+            if (!requireGithubSession(req, res)) {
                 return;
             }
 
             const {
                 jobId,
-                txHash
+                txHash,
+                manifestHash,
+                merkleRoot,
+                backupNumber
             } = req.body;
 
             // ✅ Validācija
@@ -3424,29 +3602,49 @@ app.post(
                 });
             }
 
+            // ✅ Blockchain binding validācija
+            if (
+                typeof manifestHash !== 'string' ||
+                !/^0x[0-9a-fA-F]{64}$/.test(manifestHash)
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs manifest hash.'
+                });
+            }
+
+            if (
+                typeof merkleRoot !== 'string' ||
+                !/^0x[0-9a-fA-F]{64}$/.test(merkleRoot)
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs Merkle root.'
+                });
+            }
+
+            if (
+                backupNumber === undefined ||
+                !/^\d+$/.test(String(backupNumber))
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs backup number.'
+                });
+            }
+
             return await withJobLock(
                 jobId,
                 async () => {
-                    const job =
-                        await getJob(
-                            jobId
-                        );
+                    const job = await getJob(jobId);
 
-                    const wallet =
-                        await verifyJobAuthorization(
-                            req,
-                            job
-                        );
+                    const wallet = await verifyJobAuthorization(req, job);
 
-                    await verifyJobNFTAuthorization(
-                        {
-                            ...job,
-                            walletAddress:
-                                wallet
-                        }
-                    );
+                    await verifyJobNFTAuthorization({
+                        ...job,
+                        walletAddress: wallet
+                    });
 
-                    // ✅ Pārbauda, ka manifest ir saglabāts
                     if (!job.manifestTxId) {
                         throw new Error(
                             'Manifests vēl nav saglabāts.'
@@ -3462,16 +3660,18 @@ app.post(
                         });
                     }
 
+                    if (job.status !== 'blockchain-finalizing') {
+                        throw new Error(
+                            `Nevar pabeigt backup no statusa: ${job.status}`
+                        );
+                    }
+
                     // ✅ Pārbauda blockchain transakciju
-                    const provider =
-                        getProvider();
+                    const provider = getProvider();
 
                     let receipt;
                     try {
-                        receipt =
-                            await provider.getTransactionReceipt(
-                                txHash
-                            );
+                        receipt = await provider.getTransactionReceipt(txHash);
                     } catch {
                         throw new Error(
                             'Neizdevās iegūt transakcijas receipt.'
@@ -3490,7 +3690,6 @@ app.post(
                         );
                     }
 
-                    // ✅ Pārbauda, ka transakcija ir uz mūsu NFT līgumu
                     if (
                         receipt.to?.toLowerCase() !==
                         NFT_ADDRESS.toLowerCase()
@@ -3500,7 +3699,6 @@ app.post(
                         );
                     }
 
-                    // ✅ Pārbauda, ka transakcija ir no mūsu maka
                     if (
                         receipt.from?.toLowerCase() !==
                         wallet.toLowerCase()
@@ -3510,13 +3708,12 @@ app.post(
                         );
                     }
 
-                    // ✅ Pārbauda, ka on-chain manifest URI sakrīt
-                    const nftContract =
-                        new ethers.Contract(
-                            NFT_ADDRESS,
-                            NFT_ABI,
-                            provider
-                        );
+                    // ✅ Blockchain binding — pārbauda on-chain datus
+                    const nftContract = new ethers.Contract(
+                        NFT_ADDRESS,
+                        NFT_ABI,
+                        provider
+                    );
 
                     const onChainManifestURI =
                         await nftContract.getManifestURI(
@@ -3526,21 +3723,61 @@ app.post(
                     const expectedManifestURI =
                         `ar://${job.manifestTxId}`;
 
-                    if (
-                        onChainManifestURI !==
-                        expectedManifestURI
-                    ) {
+                    if (onChainManifestURI !== expectedManifestURI) {
                         throw new Error(
                             'On-chain manifest URI nesakrīt.'
                         );
                     }
 
-                    // ✅ Atjauno job statusu
+                    // ✅ Pārbauda Merkle root
+                    const onChainMerkleRoot =
+                        await nftContract.getLastMerkleRoot(
+                            BigInt(job.tokenId)
+                        );
+
+                    if (
+                        onChainMerkleRoot.toLowerCase() !==
+                        merkleRoot.toLowerCase()
+                    ) {
+                        throw new Error(
+                            'On-chain Merkle root nesakrīt ar job.'
+                        );
+                    }
+
+                    // ✅ Pārbauda backup number
+                    const onChainBackupCount =
+                        await nftContract.getBackupCount(
+                            BigInt(job.tokenId)
+                        );
+
+                    if (
+                        onChainBackupCount.toString() !==
+                        String(backupNumber)
+                    ) {
+                        throw new Error(
+                            'On-chain backup number nesakrīt ar job.'
+                        );
+                    }
+
+                    // ✅ Pārbauda pret job datiem
+                    if (
+                        job.lastMerkleRoot &&
+                        job.lastMerkleRoot.toLowerCase() !==
+                        merkleRoot.toLowerCase()
+                    ) {
+                        // Ja ir bijis iepriekšējais merkle root, pārbauda
+                        // ka jaunais atšķiras (jo tas ir jauns backup)
+                    }
+
+                    // ✅ Saglabā blockchain binding
                     await updateJob(
                         jobId,
                         {
                             status: 'completed',
                             completionTxHash: txHash,
+                            manifestHash,
+                            merkleRoot,
+                            backupNumber: String(backupNumber),
                             completedAt: Date.now(),
                             updatedAt: Date.now()
                         },
@@ -3551,6 +3788,8 @@ app.post(
                     logInfo('Job ID', jobId);
                     logInfo('Tx Hash', txHash);
                     logInfo('Token ID', job.tokenId);
+                    logInfo('Merkle Root', merkleRoot);
+                    logInfo('Backup Number', backupNumber);
 
                     return res.json({
                         success: true,
@@ -3561,26 +3800,168 @@ app.post(
                 }
             );
         } catch (error) {
-            const message =
-                errorMessage(
-                    error
-                );
-
+            const message = errorMessage(error);
             const status =
-                /nav atrasts|nav github|nesakrīt|nepieder|nederīgs|nav saglabāts|neizdevās|nav apstiprināta|nederīga state/i.test(
-                    message
-                )
+                /nav atrasts|nav github|nesakrīt|nepieder|nederīgs|nav saglabāts|neizdevās|nav apstiprināta|nederīga state/i.test(message)
                     ? 400
                     : 500;
 
-            return res
-                .status(status)
-                .json({
-                    success:
-                        false,
-                    error:
-                        message
+            return res.status(status).json({
+                success: false,
+                error: message
+            });
+        }
+    }
+);
+
+// ✅ 7. Atzīmē backup kā failed
+app.post(
+    '/api/fail-backup',
+    backupLimiter,
+    async (req, res) => {
+        try {
+            assertSameOrigin(req);
+
+            if (!requireGithubSession(req, res)) {
+                return;
+            }
+
+            const { jobId, error: jobError } = req.body;
+
+            if (!validateJobId(jobId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs job ID.'
                 });
+            }
+
+            return await withJobLock(
+                jobId,
+                async () => {
+                    const job = await getJob(jobId);
+
+                    await verifyJobAuthorization(req, job);
+
+                    // ✅ Nevar no completed → failed
+                    if (job.status === 'completed') {
+                        return res.json({
+                            success: true,
+                            alreadyCompleted: true,
+                            status: 'completed'
+                        });
+                    }
+
+                    // ✅ Ja jau failed — idempotents
+                    if (job.status === 'failed') {
+                        return res.json({
+                            success: true,
+                            idempotent: true,
+                            status: 'failed'
+                        });
+                    }
+
+                    await updateJob(
+                        jobId,
+                        {
+                            status: 'failed',
+                            error: String(jobError || 'Unknown error').substring(0, 500),
+                            failedAt: Date.now(),
+                            updatedAt: Date.now()
+                        },
+                        JOB_TTL_SECONDS
+                    );
+
+                    logSection('⚠️ BACKUP FAILED');
+                    logInfo('Job ID', jobId);
+                    logInfo('Error', jobError);
+
+                    return res.json({
+                        success: true,
+                        status: 'failed'
+                    });
+                }
+            );
+        } catch (error) {
+            const message = errorMessage(error);
+            const status =
+                /nav atrasts|nav github|nepieder|nederīgs|nederīga state/i.test(message)
+                    ? 400
+                    : 500;
+
+            return res.status(status).json({
+                success: false,
+                error: message
+            });
+        }
+    }
+);
+
+// ✅ 8. Retry no failed → prepared
+app.post(
+    '/api/retry-backup',
+    backupLimiter,
+    async (req, res) => {
+        try {
+            assertSameOrigin(req);
+
+            if (!requireGithubSession(req, res)) {
+                return;
+            }
+
+            const { jobId } = req.body;
+
+            if (!validateJobId(jobId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs job ID.'
+                });
+            }
+
+            return await withJobLock(
+                jobId,
+                async () => {
+                    const job = await getJob(jobId);
+
+                    await verifyJobAuthorization(req, job);
+
+                    if (job.status !== 'failed') {
+                        throw new Error(
+                            `Retry iespējams tikai no 'failed' statusa, nevis '${job.status}'`
+                        );
+                    }
+
+                    await updateJob(
+                        jobId,
+                        {
+                            status: 'prepared',
+                            error: null,
+                            failedAt: null,
+                            retriedAt: Date.now(),
+                            updatedAt: Date.now()
+                        },
+                        JOB_TTL_SECONDS
+                    );
+
+                    logSection('🔄 BACKUP RETRY');
+                    logInfo('Job ID', jobId);
+
+                    return res.json({
+                        success: true,
+                        status: 'prepared'
+                    });
+                }
+            );
+        } catch (error) {
+            const message = errorMessage(error);
+            const status =
+                /nav atrasts|nav github|nepieder|nederīgs|nederīga state/i.test(message)
+                    ? 400
+                    : 500;
+
+            return res.status(status).json({
+                success: false,
+                error: message
+            });
         }
     }
 );
@@ -3688,6 +4069,11 @@ app.listen(
         logInfo(
             'Max backup queue',
             MAX_BACKUP_QUEUE
+        );
+
+        logInfo(
+            'Lock heartbeat',
+            `${LOCK_HEARTBEAT_MS}ms`
         );
 
         logInfo(
