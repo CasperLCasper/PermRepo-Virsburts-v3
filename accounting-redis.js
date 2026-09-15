@@ -35,7 +35,7 @@ const VALID_JOB_STATUSES = [
     'failed'
 ];
 
-// ✅ Pilns state machine ar visiem starpsoļiem
+// ✅ Pilns state machine
 const VALID_TRANSITIONS = {
     'prepared': ['zip-uploading', 'failed'],
     'zip-uploading': ['zip-uploaded', 'failed'],
@@ -43,15 +43,12 @@ const VALID_TRANSITIONS = {
     'manifest-uploading': ['manifest-uploaded', 'failed'],
     'manifest-uploaded': ['blockchain-finalizing', 'failed'],
     'blockchain-finalizing': ['completed', 'failed'],
-    'completed': [],  // ← Nevar mainīt
-    'failed': ['prepared']  // ← Var atkārtot (retry)
+    'completed': [],
+    'failed': ['prepared']
 };
 
 /**
  * Validē state pāreju
- * @param {string} currentStatus - Pašreizējais statuss
- * @param {string} newStatus - Jaunais statuss
- * @throws {Error} Ja pāreja nav atļauta
  */
 export function validateStateTransition(currentStatus, newStatus) {
     if (!VALID_JOB_STATUSES.includes(currentStatus)) {
@@ -66,7 +63,6 @@ export function validateStateTransition(currentStatus, newStatus) {
         );
     }
     
-    // Ja tas pats status → OK (idempotents)
     if (currentStatus === newStatus) {
         return true;
     }
@@ -141,7 +137,6 @@ export async function createJob(
         throw new Error('Nederīgi job dati.');
     }
 
-    // ✅ Validē statusu
     if (
         !job.status ||
         !VALID_JOB_STATUSES.includes(job.status)
@@ -232,7 +227,7 @@ export async function getJob(jobId) {
 
 /**
  * Atomisks updateJob ar optimistic concurrency
- * Ja state transition neizdodas, atkārto
+ * Idempotence: ja tas pats zipTxId/manifestTxId → OK
  */
 export async function updateJob(
     jobId,
@@ -262,7 +257,7 @@ export async function updateJob(
         );
     }
 
-    // ✅ Atomic update ar retry (max 3 mēģinājumi)
+    // ✅ Atomic update ar retry
     const maxRetries = 3;
     let lastError = null;
 
@@ -278,6 +273,17 @@ export async function updateJob(
 
             // ✅ State validācija
             if (patch.status && patch.status !== current.status) {
+                // ✅ Failed ierobežojums: neļauj failed no blockchain-finalizing ar backupTxHash
+                if (
+                    patch.status === 'failed' &&
+                    current.status === 'blockchain-finalizing' &&
+                    current.backupTxHash
+                ) {
+                    throw new Error(
+                        'Blockchain transaction exists — recovery required, not failed.'
+                    );
+                }
+                
                 validateStateTransition(current.status, patch.status);
             }
 
@@ -303,7 +309,8 @@ export async function updateJob(
             if (
                 error.message &&
                 (error.message.includes('Nederīga state pāreja') ||
-                 error.message.includes('Backup job nav atrasts'))
+                 error.message.includes('Backup job nav atrasts') ||
+                 error.message.includes('recovery required'))
             ) {
                 throw error;
             }
@@ -385,7 +392,6 @@ export async function acquireJobLock(
 
 /**
  * Pagarina job lock TTL
- * @returns {boolean} true, ja pagarināts; false, ja lock vairs nav mūsu
  */
 export async function extendJobLock(
     jobId,
