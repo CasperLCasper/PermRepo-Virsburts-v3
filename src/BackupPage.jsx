@@ -1029,6 +1029,24 @@ function BackupPage() {
 
             await tx.wait();
 
+            // ✅ Paziņo serverim par pabeigšanu
+            try {
+                await apiJson('/api/complete-backup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jobId,
+                        txHash: tx.hash
+                    })
+                });
+            } catch (completeError) {
+                // Ja neizdodas, tikai brīdinājums — backup jau ir pabeigts
+                console.warn(
+                    'Neizdevās paziņot serverim par pabeigšanu:',
+                    completeError
+                );
+            }
+
             setNftInfo({
                 tokenId: nftInfo.tokenId,
                 backupCount:
