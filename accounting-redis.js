@@ -20,6 +20,67 @@ function jobLockKey(jobId) {
     return `permrepo:joblock:${jobId}`;
 }
 
+// -----------------------------------------------------------------------------
+// State machine validācija
+// -----------------------------------------------------------------------------
+
+const VALID_JOB_STATUSES = [
+    'prepared',
+    'zip-uploaded',
+    'manifest-uploaded',
+    'completed',
+    'failed'
+];
+
+// ✅ Atļautās state pārejas
+const VALID_TRANSITIONS = {
+    'prepared': ['zip-uploaded', 'failed'],
+    'zip-uploaded': ['manifest-uploaded', 'failed'],
+    'manifest-uploaded': ['completed', 'failed'],
+    'completed': [],  // ← Nevar mainīt
+    'failed': ['prepared']  // ← Var atkārtot
+};
+
+/**
+ * Validē state pāreju
+ * @param {string} currentStatus - Pašreizējais statuss
+ * @param {string} newStatus - Jaunais statuss
+ * @throws {Error} Ja pāreja nav atļauta
+ */
+export function validateStateTransition(currentStatus, newStatus) {
+    if (!VALID_JOB_STATUSES.includes(currentStatus)) {
+        throw new Error(
+            `Nederīgs pašreizējais status: ${currentStatus}`
+        );
+    }
+    
+    if (!VALID_JOB_STATUSES.includes(newStatus)) {
+        throw new Error(
+            `Nederīgs jaunais status: ${newStatus}`
+        );
+    }
+    
+    // Ja tas pats status → OK (idempotents)
+    if (currentStatus === newStatus) {
+        return true;
+    }
+    
+    const allowed = VALID_TRANSITIONS[currentStatus] || [];
+    
+    if (!allowed.includes(newStatus)) {
+        throw new Error(
+            `Nederīga state pāreja: ${currentStatus} → ${newStatus}. ` +
+            `Atļautās: ${allowed.join(', ') || 'nav'}`
+        );
+    }
+    
+    return true;
+}
+
+// -----------------------------------------------------------------------------
+// Redis inicializācija
+// -----------------------------------------------------------------------------
+
 export function initRedis() {
     if (!redis && process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
         redis = new Redis({
@@ -48,6 +109,10 @@ function requireRedis() {
     return redis;
 }
 
+// -----------------------------------------------------------------------------
+// Job operācijas
+// -----------------------------------------------------------------------------
+
 export async function createJob(
     jobId,
     job,
@@ -68,6 +133,16 @@ export async function createJob(
         Array.isArray(job)
     ) {
         throw new Error('Nederīgi job dati.');
+    }
+
+    // ✅ Validē statusu
+    if (
+        !job.status ||
+        !VALID_JOB_STATUSES.includes(job.status)
+    ) {
+        throw new Error(
+            `Nederīgs job status: ${job.status}`
+        );
     }
 
     const ttl = Number(ttlSeconds);
@@ -175,6 +250,11 @@ export async function updateJob(
         );
     }
 
+    // ✅ State validācija
+    if (patch.status && patch.status !== current.status) {
+        validateStateTransition(current.status, patch.status);
+    }
+
     const ttl = Number(ttlSeconds);
 
     if (
@@ -202,6 +282,10 @@ export async function updateJob(
 
     return next;
 }
+
+// -----------------------------------------------------------------------------
+// Job lock
+// -----------------------------------------------------------------------------
 
 export async function acquireJobLock(
     jobId,
@@ -303,3 +387,12 @@ export async function releaseJobLock(
         );
     }
 }
+
+// -----------------------------------------------------------------------------
+// Eksporti
+// -----------------------------------------------------------------------------
+
+export {
+    VALID_JOB_STATUSES,
+    VALID_TRANSITIONS
+};
