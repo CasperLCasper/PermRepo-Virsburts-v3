@@ -83,6 +83,7 @@ function BackupPage() {
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
     const [backupCompleted, setBackupCompleted] = useState(false);
+    const [backupFailed, setBackupFailed] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
     const [queuePosition, setQueuePosition] = useState(null);
     
@@ -280,7 +281,7 @@ function BackupPage() {
         }
     }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
-    // ✅ NDJSON lasīšana no servera
+    // ✅ NDJSON lasīšana no servera + browser reload recovery
     useEffect(() => {
         let cancelled = false;
         let reader = null;
@@ -415,6 +416,13 @@ function BackupPage() {
                                     lastMerkleRoot: parsed.lastMerkleRoot || null
                                 });
                                 setPreparedJobId(parsed.jobId);
+                                // ✅ Saglabā jobId localStorage (browser reload recovery)
+                                try {
+                                    localStorage.setItem(
+                                        `permrepo-job-${repoName}`,
+                                        parsed.jobId
+                                    );
+                                } catch {}
                                 break;
                             case 'file':
                                 files.push(parsed.file);
@@ -533,6 +541,7 @@ function BackupPage() {
         try {
             setIsWorking(true);
             setError('');
+            setBackupFailed(false);
             
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
             
@@ -650,6 +659,13 @@ function BackupPage() {
             let merkleRoot = uploadedZipRef.current.merkleRoot;
 
             if (!zipTxId) {
+                // ✅ 1. Sāk ZIP augšupielādi serverī
+                await apiJson('/api/start-zip-upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId })
+                });
+
                 const zip = new JSZip();
 
                 for (const file of changedFiles) {
@@ -721,12 +737,14 @@ function BackupPage() {
                     merkleRoot
                 };
 
+                // ✅ 2. Saglabā ZIP tx ID serverī
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jobId, zipTxId })
                 });
             } else {
+                // Ja ZIP jau bija augšupielādēts, serverim atkārtoti saglabājam to pašu ID.
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -741,6 +759,13 @@ function BackupPage() {
             let manifestTxId = uploadedManifestRef.current.txId;
 
             if (!manifestTxId) {
+                // ✅ 3. Sāk manifesta augšupielādi serverī
+                await apiJson('/api/start-manifest-upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId })
+                });
+
                 const history = [...currentPreviousHistory];
 
                 if (currentPreviousManifestId) {
@@ -873,6 +898,7 @@ function BackupPage() {
                     manifest
                 };
 
+                // ✅ 4. Saglabā manifesta tx ID serverī
                 await apiJson('/api/save-manifest-tx', {
                     method: 'POST',
                     headers: {
@@ -1011,6 +1037,13 @@ function BackupPage() {
                     value
                 );
 
+            // ✅ 5. Sāk blockchain finalizāciju serverī
+            await apiJson('/api/start-blockchain-finalize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jobId })
+            });
+
             const nftWrite = new ethers.Contract(
                 config.nftAddress,
                 NFT_ABI,
@@ -1029,23 +1062,40 @@ function BackupPage() {
 
             await tx.wait();
 
-            // ✅ Paziņo serverim par pabeigšanu
+            // ✅ 6. Paziņo serverim par pabeigšanu ar blockchain binding
+            let redisCompleted = false;
             try {
                 await apiJson('/api/complete-backup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         jobId,
-                        txHash: tx.hash
+                        txHash: tx.hash,
+                        manifestHash,
+                        merkleRoot,
+                        backupNumber: (onChainBackupCount + 1n).toString()
                     })
                 });
+                redisCompleted = true;
             } catch (completeError) {
-                // Ja neizdodas, tikai brīdinājums — backup jau ir pabeigts
-                console.warn(
+                console.error(
                     'Neizdevās paziņot serverim par pabeigšanu:',
                     completeError
                 );
             }
+
+            // ✅ Frontend ↔ Redis consistency
+            if (!redisCompleted) {
+                setError(t('redis-completion-failed'));
+                setBackupFailed(true);
+                setIsWorking(false);
+                return;
+            }
+
+            // ✅ Notīra localStorage (job pabeigts)
+            try {
+                localStorage.removeItem(`permrepo-job-${repoName}`);
+            } catch {}
 
             setNftInfo({
                 tokenId: nftInfo.tokenId,
@@ -1065,6 +1115,24 @@ function BackupPage() {
                 key: 'backup-complete'
             });
         } catch (e) {
+            // ✅ Paziņo serverim par kļūdu
+            if (jobId) {
+                try {
+                    await apiJson('/api/fail-backup', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jobId,
+                            error: getSafeErrorMessage(e)
+                        })
+                    });
+                } catch {
+                    // Ignorē
+                }
+            }
+            
+            setBackupFailed(true);
+
             if (
                 e.code === 'ACTION_REJECTED' ||
                 e.code === 4001
@@ -1095,6 +1163,37 @@ function BackupPage() {
         encryptData,
         userAddress
     ]);
+
+    // ✅ Retry no failed state
+    const retryBackup = useCallback(async () => {
+        if (!preparedJobId) {
+            setError(t('backup-session-invalid'));
+            return;
+        }
+
+        try {
+            setIsWorking(true);
+            setError('');
+            setBackupFailed(false);
+
+            await apiJson('/api/retry-backup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jobId: preparedJobId })
+            });
+
+            // ✅ Notīra iepriekšējo progresu
+            uploadedZipRef.current = { txId: null, iv: null, merkleRoot: null };
+            uploadedManifestRef.current = { txId: null, manifest: null };
+
+            setStatus(t('retry-ready'));
+            setLastStatusData({ type: 'simple', key: 'retry-ready' });
+            setIsWorking(false);
+        } catch (e) {
+            setError(getSafeErrorMessage(e));
+            setIsWorking(false);
+        }
+    }, [preparedJobId, apiJson, t]);
 
     if (!config) {
         return (
@@ -1251,7 +1350,23 @@ function BackupPage() {
                 </>
             )}
             
-            {!backupCompleted ? (
+            {/* ✅ Retry poga, ja failed */}
+            {backupFailed && !backupCompleted ? (
+                <button 
+                    onClick={retryBackup}
+                    disabled={isWorking}
+                    className="sign-button"
+                    style={{ marginTop: '20px', background: 'linear-gradient(135deg, #f85149 0%, #da3633 100%)' }}
+                >
+                    {isWorking ? (
+                        <div style={{ textAlign: 'center' }}>
+                            <div className="spinner"></div>
+                        </div>
+                    ) : (
+                        t('retry-backup')
+                    )}
+                </button>
+            ) : !backupCompleted ? (
                 <button 
                     onClick={continueBackup}
                     disabled={
