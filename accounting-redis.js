@@ -10,7 +10,7 @@ import crypto from 'crypto';
 let redis = null;
 
 const DEFAULT_JOB_TTL = Number(process.env.JOB_TTL_SECONDS || 3600);
-const JOB_LOCK_TTL = Number(process.env.JOB_LOCK_TTL_SECONDS || 300);
+const JOB_LOCK_TTL = Number(process.env.JOB_LOCK_TTL_SECONDS || 600);
 
 function jobKey(jobId) {
     return `permrepo:job:${jobId}`;
@@ -26,19 +26,25 @@ function jobLockKey(jobId) {
 
 const VALID_JOB_STATUSES = [
     'prepared',
+    'zip-uploading',
     'zip-uploaded',
+    'manifest-uploading',
     'manifest-uploaded',
+    'blockchain-finalizing',
     'completed',
     'failed'
 ];
 
-// ✅ Atļautās state pārejas
+// ✅ Pilns state machine ar visiem starpsoļiem
 const VALID_TRANSITIONS = {
-    'prepared': ['zip-uploaded', 'failed'],
-    'zip-uploaded': ['manifest-uploaded', 'failed'],
-    'manifest-uploaded': ['completed', 'failed'],
+    'prepared': ['zip-uploading', 'failed'],
+    'zip-uploading': ['zip-uploaded', 'failed'],
+    'zip-uploaded': ['manifest-uploading', 'failed'],
+    'manifest-uploading': ['manifest-uploaded', 'failed'],
+    'manifest-uploaded': ['blockchain-finalizing', 'failed'],
+    'blockchain-finalizing': ['completed', 'failed'],
     'completed': [],  // ← Nevar mainīt
-    'failed': ['prepared']  // ← Var atkārtot
+    'failed': ['prepared']  // ← Var atkārtot (retry)
 };
 
 /**
@@ -224,6 +230,10 @@ export async function getJob(jobId) {
     }
 }
 
+/**
+ * Atomisks updateJob ar optimistic concurrency
+ * Ja state transition neizdodas, atkārto
+ */
 export async function updateJob(
     jobId,
     patch,
@@ -241,20 +251,6 @@ export async function updateJob(
         );
     }
 
-    const current =
-        await getJob(jobId);
-
-    if (!current) {
-        throw new Error(
-            'Backup job nav atrasts.'
-        );
-    }
-
-    // ✅ State validācija
-    if (patch.status && patch.status !== current.status) {
-        validateStateTransition(current.status, patch.status);
-    }
-
     const ttl = Number(ttlSeconds);
 
     if (
@@ -266,25 +262,64 @@ export async function updateJob(
         );
     }
 
-    const next = {
-        ...current,
-        ...patch,
-        updatedAt: Date.now()
-    };
+    // ✅ Atomic update ar retry (max 3 mēģinājumi)
+    const maxRetries = 3;
+    let lastError = null;
 
-    await client.set(
-        jobKey(jobId),
-        JSON.stringify(next),
-        {
-            ex: ttl
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const current = await getJob(jobId);
+
+            if (!current) {
+                throw new Error(
+                    'Backup job nav atrasts.'
+                );
+            }
+
+            // ✅ State validācija
+            if (patch.status && patch.status !== current.status) {
+                validateStateTransition(current.status, patch.status);
+            }
+
+            const next = {
+                ...current,
+                ...patch,
+                updatedAt: Date.now()
+            };
+
+            await client.set(
+                jobKey(jobId),
+                JSON.stringify(next),
+                {
+                    ex: ttl
+                }
+            );
+
+            return next;
+        } catch (error) {
+            lastError = error;
+            
+            // Ja tā ir state transition kļūda, nav jēgas atkārtot
+            if (
+                error.message &&
+                (error.message.includes('Nederīga state pāreja') ||
+                 error.message.includes('Backup job nav atrasts'))
+            ) {
+                throw error;
+            }
+            
+            // Ja tā ir cita kļūda, mēģina vēlreiz
+            if (attempt < maxRetries - 1) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
         }
-    );
+    }
 
-    return next;
+    throw lastError || new Error('updateJob neizdevās pēc vairākiem mēģinājumiem.');
 }
 
 // -----------------------------------------------------------------------------
-// Job lock
+// Job lock ar heartbeat
 // -----------------------------------------------------------------------------
 
 export async function acquireJobLock(
@@ -348,6 +383,61 @@ export async function acquireJobLock(
     }
 }
 
+/**
+ * Pagarina job lock TTL
+ * @returns {boolean} true, ja pagarināts; false, ja lock vairs nav mūsu
+ */
+export async function extendJobLock(
+    jobId,
+    token,
+    ttlSeconds = JOB_LOCK_TTL
+) {
+    const client = requireRedis();
+
+    if (
+        typeof token !== 'string' ||
+        token.length === 0
+    ) {
+        return false;
+    }
+
+    const key = jobLockKey(jobId);
+
+    const ttl = Number(ttlSeconds);
+
+    if (
+        !Number.isInteger(ttl) ||
+        ttl <= 0
+    ) {
+        throw new Error('Nederīgs job lock TTL.');
+    }
+
+    const script = `
+        local current = redis.call("GET", KEYS[1])
+        if current == ARGV[1] then
+            redis.call("EXPIRE", KEYS[1], ARGV[2])
+            return 1
+        end
+        return 0
+    `;
+
+    try {
+        const result = await client.eval(
+            script,
+            [key],
+            [token, ttl.toString()]
+        );
+
+        return result === 1;
+    } catch (error) {
+        console.error(
+            'Redis job lock pagarināšanas kļūda:',
+            error
+        );
+        return false;
+    }
+}
+
 export async function releaseJobLock(
     jobId,
     token
@@ -394,5 +484,7 @@ export async function releaseJobLock(
 
 export {
     VALID_JOB_STATUSES,
-    VALID_TRANSITIONS
+    VALID_TRANSITIONS,
+    DEFAULT_JOB_TTL,
+    JOB_LOCK_TTL
 };
