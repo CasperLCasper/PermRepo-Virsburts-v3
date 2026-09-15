@@ -64,7 +64,11 @@ export const translations = {
         'backup-session-invalid': 'Backup sesija nav derīga',
         'invalid-file-data': 'Nederīgi faila dati',
         'invalid-upload-id': 'Nederīgs augšupielādes ID',
-        'unknown-error': 'Nezināma kļūda'
+        'unknown-error': 'Nezināma kļūda',
+        // ✅ Jauni tulkojumi Redis lifecycle
+        'redis-completion-failed': 'Neizdevās apstiprināt backup pabeigšanu serverī',
+        'retry-backup': 'Mēģināt vēlreiz',
+        'retry-ready': 'Gatavs atkārtotai augšupielādei'
     },
 
     en: {
@@ -132,7 +136,11 @@ export const translations = {
         'backup-session-invalid': 'Backup session is not valid',
         'invalid-file-data': 'Invalid file data',
         'invalid-upload-id': 'Invalid upload ID',
-        'unknown-error': 'Unknown error'
+        'unknown-error': 'Unknown error',
+        // ✅ New translations for Redis lifecycle
+        'redis-completion-failed': 'Failed to confirm backup completion on server',
+        'retry-backup': 'Retry backup',
+        'retry-ready': 'Ready for retry'
     },
 
     eo: {
@@ -200,6 +208,10 @@ export const translations = {
         'backup-session-invalid': 'Sekurkopia seanco ne validas',
         'invalid-file-data': 'Nevalidaj dosieraj datumoj',
         'invalid-upload-id': 'Nevalida alŝuta ID',
-        'unknown-error': 'Nekonata eraro'
+        'unknown-error': 'Nekonata eraro',
+        // ✅ Novaj tradukoj por Redis lifecycle
+        'redis-completion-failed': 'Malsukcesis konfirmi sekurkopian finiĝon ĉe servilo',
+        'retry-backup': 'Reprovi sekurkopion',
+        'retry-ready': 'Preta por reprovo'
     }
 };
