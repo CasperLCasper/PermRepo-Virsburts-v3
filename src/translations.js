@@ -65,16 +65,17 @@ export const translations = {
         'invalid-file-data': 'Nederīgi faila dati',
         'invalid-upload-id': 'Nederīgs augšupielādes ID',
         'unknown-error': 'Nezināma kļūda',
-        // ✅ Jauni tulkojumi Redis lifecycle
+        // ✅ Recovery tulkojumi
         'recovery-required': 'Blockchain transakcija ir iesniegta — nepieciešams recovery',
+        'recovery-ready': 'Gatavs turpināt no saglabātā stāvokļa',
+        'recovery-upload-incomplete': 'Augšupielāde nav pabeigta — lūdzu, sāciet no jauna',
         'checking-blockchain-tx': 'Pārbauda blockchain transakciju...',
         'recover-backup': 'Atjaunot backup',
-        'recovery-ready': 'Gatavs turpināt no saglabātā stāvokļa',
-        'backup-failed': 'Backups neizdevās',
         'no-backup-tx': 'Nav atrasts backup tx hash',
         'redis-completion-failed': 'Neizdevās apstiprināt backup pabeigšanu serverī',
         'retry-backup': 'Mēģināt vēlreiz',
-        'retry-ready': 'Gatavs atkārtotai augšupielādei'
+        'retry-ready': 'Gatavs atkārtotai augšupielādei',
+        'backup-failed': 'Backups neizdevās'
     },
 
     en: {
@@ -143,16 +144,17 @@ export const translations = {
         'invalid-file-data': 'Invalid file data',
         'invalid-upload-id': 'Invalid upload ID',
         'unknown-error': 'Unknown error',
-        // ✅ New translations for Redis lifecycle
+        // ✅ Recovery translations
         'recovery-required': 'Blockchain transaction submitted — recovery required',
+        'recovery-ready': 'Ready to continue from saved state',
+        'recovery-upload-incomplete': 'Upload incomplete — please start again',
         'checking-blockchain-tx': 'Checking blockchain transaction...',
         'recover-backup': 'Recover backup',
-        'recovery-ready': 'Ready to continue from saved state',
-        'backup-failed': 'Backup failed',
         'no-backup-tx': 'Backup tx hash not found',
         'redis-completion-failed': 'Failed to confirm backup completion on server',
         'retry-backup': 'Retry backup',
-        'retry-ready': 'Ready for retry'
+        'retry-ready': 'Ready for retry',
+        'backup-failed': 'Backup failed'
     },
 
     eo: {
@@ -221,15 +223,16 @@ export const translations = {
         'invalid-file-data': 'Nevalidaj dosieraj datumoj',
         'invalid-upload-id': 'Nevalida alŝuta ID',
         'unknown-error': 'Nekonata eraro',
-        // ✅ Novaj tradukoj por Redis lifecycle
+        // ✅ Recovery tradukoj
         'recovery-required': 'Surgxena transakcio sendita — rekupero bezonata',
+        'recovery-ready': 'Preta por daurigi de konservita stato',
+        'recovery-upload-incomplete': 'Alŝuto nekompleta — bonvolu rekomenci',
         'checking-blockchain-tx': 'Kontrolante surgxenan transakcion...',
         'recover-backup': 'Rekuperi sekurkopion',
-        'recovery-ready': 'Preta por daurigi de konservita stato',
-        'backup-failed': 'Sekurkopio malsukcesis',
         'no-backup-tx': 'Sekurkopia tx hash ne trovita',
         'redis-completion-failed': 'Malsukcesis konfirmi sekurkopian finiĝon ĉe servilo',
         'retry-backup': 'Reprovi sekurkopion',
-        'retry-ready': 'Preta por reprovo'
+        'retry-ready': 'Preta por reprovo',
+        'backup-failed': 'Sekurkopio malsukcesis'
     }
 };
