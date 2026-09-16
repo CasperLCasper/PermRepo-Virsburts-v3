@@ -348,261 +348,273 @@ function BackupPage() {
 
                 // ✅ Recovery no localStorage
                 const storedJobId = localStorage.getItem(`permrepo-job-${repoName}`);
+                let shouldStartNewBackup = !storedJobId;
 
                 if (storedJobId) {
                     try {
                         const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
                         if (jobStatus.success) {
-                            setPreparedJobId(jobStatus.jobId);
-                            setNftInfo({
-                                tokenId: jobStatus.tokenId,
-                                backupCount: jobStatus.backupCount || null,
-                                lastManifest: jobStatus.manifestURI || null,
-                                lastMerkleRoot: jobStatus.merkleRoot || null
-                            });
-
-                            // ✅ Atjauno metadata
-                            if (jobStatus.changedFileMetadata?.length > 0) {
-                                setChangedFilesForUpload(jobStatus.changedFileMetadata);
-                            }
-                            if (jobStatus.unchangedFiles) {
-                                setUnchangedFilesForUpload(jobStatus.unchangedFiles);
-                            }
-
-                            setRecoveredJobData(jobStatus);
-
-                            // ✅ Ja jau completed
-                            if (jobStatus.status === 'completed') {
-                                setLastManifestTxId(jobStatus.manifestTxId);
-                                setBackupCompleted(true);
-                                setStatus(t('backup-complete'));
-                                setFileInfo({ count: 0, sizeText: '', loading: false });
-                                localStorage.removeItem(`permrepo-job-${repoName}`);
-                                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
-                                return;
-                            }
-
-                            // ✅ Ja blockchain-finalizing ar backupTxHash
-                            if (
-                                jobStatus.status === 'blockchain-finalizing' &&
-                                jobStatus.backupTxHash
-                            ) {
-                                setStatus(t('checking-blockchain-tx'));
-                                setFileInfo({ count: 0, sizeText: '', loading: false });
-
-                                try {
-                                    await apiJson('/api/complete-backup', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            jobId: jobStatus.jobId,
-                                            txHash: jobStatus.backupTxHash
-                                        })
-                                    });
-
-                                    setLastManifestTxId(jobStatus.manifestTxId);
-                                    setBackupCompleted(true);
-                                    setStatus(t('backup-complete'));
-                                    localStorage.removeItem(`permrepo-job-${repoName}`);
-                                    localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
-                                    return;
-                                } catch (recoveryError) {
-                                    setRecoveryRequired(true);
-                                    setStatus(t('recovery-required'));
-                                    setError(getSafeErrorMessage(recoveryError));
-                                    return;
-                                }
-                            }
-
-                            // ✅ Ja failed — rāda retry
-                            if (jobStatus.status === 'failed') {
-                                setBackupFailed(true);
-                                setStatus(t('backup-failed'));
-                                setFileInfo({ count: 0, sizeText: '', loading: false });
-                                return;
-                            }
-
-                            // ✅ Ja zip-uploading/manifest-uploading — reprepare
+                            // ✅ ZIP/MANIFEST UPLOADING — sāk pilnīgi jaunu prepare-backup
                             if (
                                 jobStatus.status === 'zip-uploading' ||
                                 jobStatus.status === 'manifest-uploading'
                             ) {
-                                // ✅ Reprepare — nevis turpināt
-                                setBackupFailed(true);
-                                setStatus(t('recovery-upload-incomplete'));
-                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                // ✅ Notīra localStorage
                                 localStorage.removeItem(`permrepo-job-${repoName}`);
-                                return;
-                            }
+                                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
 
-                            // ✅ Ja zip-uploaded/manifest-uploaded — var turpināt
-                            if (
-                                jobStatus.status === 'zip-uploaded' ||
-                                jobStatus.status === 'manifest-uploaded'
-                            ) {
-                                setStatus(t('recovery-ready'));
-                                setFileInfo({ count: 0, sizeText: '', loading: false });
-                                return;
+                                // ✅ Sāk pilnīgi jaunu prepare-backup (bez return)
+                                shouldStartNewBackup = true;
+                            } else {
+                                // ✅ Turpina ar recovery (zip-uploaded, manifest-uploaded, etc.)
+                                setPreparedJobId(jobStatus.jobId);
+                                setNftInfo({
+                                    tokenId: jobStatus.tokenId,
+                                    backupCount: jobStatus.backupCount || null,  // ← Tagad ir!
+                                    lastManifest: jobStatus.manifestURI || null,
+                                    lastMerkleRoot: jobStatus.merkleRoot || null
+                                });
+
+                                // ✅ Atjauno metadata
+                                if (jobStatus.changedFileMetadata?.length > 0) {
+                                    setChangedFilesForUpload(jobStatus.changedFileMetadata);
+                                }
+                                if (jobStatus.unchangedFiles) {
+                                    setUnchangedFilesForUpload(jobStatus.unchangedFiles);
+                                }
+
+                                setRecoveredJobData(jobStatus);
+
+                                // ✅ Ja jau completed
+                                if (jobStatus.status === 'completed') {
+                                    setLastManifestTxId(jobStatus.manifestTxId);
+                                    setBackupCompleted(true);
+                                    setStatus(t('backup-complete'));
+                                    setFileInfo({ count: 0, sizeText: '', loading: false });
+                                    localStorage.removeItem(`permrepo-job-${repoName}`);
+                                    localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                                    return;
+                                }
+
+                                // ✅ Ja blockchain-finalizing ar backupTxHash
+                                if (
+                                    jobStatus.status === 'blockchain-finalizing' &&
+                                    jobStatus.backupTxHash
+                                ) {
+                                    setStatus(t('checking-blockchain-tx'));
+                                    setFileInfo({ count: 0, sizeText: '', loading: false });
+
+                                    try {
+                                        await apiJson('/api/complete-backup', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                                jobId: jobStatus.jobId,
+                                                txHash: jobStatus.backupTxHash
+                                            })
+                                        });
+
+                                        setLastManifestTxId(jobStatus.manifestTxId);
+                                        setBackupCompleted(true);
+                                        setStatus(t('backup-complete'));
+                                        localStorage.removeItem(`permrepo-job-${repoName}`);
+                                        localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                                        return;
+                                    } catch (recoveryError) {
+                                        setRecoveryRequired(true);
+                                        setStatus(t('recovery-required'));
+                                        setError(getSafeErrorMessage(recoveryError));
+                                        return;
+                                    }
+                                }
+
+                                // ✅ Ja failed — rāda retry
+                                if (jobStatus.status === 'failed') {
+                                    setBackupFailed(true);
+                                    setStatus(t('backup-failed'));
+                                    setFileInfo({ count: 0, sizeText: '', loading: false });
+                                    return;
+                                }
+
+                                // ✅ Ja zip-uploaded / manifest-uploaded — var turpināt
+                                if (
+                                    jobStatus.status === 'zip-uploaded' ||
+                                    jobStatus.status === 'manifest-uploaded'
+                                ) {
+                                    setStatus(t('recovery-ready'));
+                                    setFileInfo({ count: 0, sizeText: '', loading: false });
+                                    return;
+                                }
                             }
+                        } else {
+                            // Job nav atrasts
+                            localStorage.removeItem(`permrepo-job-${repoName}`);
+                            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                            shouldStartNewBackup = true;
                         }
                     } catch (recoveryError) {
+                        // Job nav atrasts — sāk jaunu
                         localStorage.removeItem(`permrepo-job-${repoName}`);
+                        localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                        shouldStartNewBackup = true;
                     }
                 }
 
-                // ✅ Ja nav recovery — sāk jaunu backup
-                const response = await fetch('/api/prepare-backup', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({ repoName, walletAddress: currentAddress })
-                });
+                // ✅ Ja jāsāk jauns backup — turpina ar prepare-backup
+                if (shouldStartNewBackup) {
+                    const response = await fetch('/api/prepare-backup', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ repoName, walletAddress: currentAddress })
+                    });
 
-                if (!response.ok) {
-                    let errorMessage = `HTTP ${response.status}`;
-                    try {
-                        const errorData = await response.json();
-                        errorMessage = errorData.error || errorMessage;
-                    } catch {}
-                    throw new Error(errorMessage);
-                }
-
-                reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                const files = [];
-                let metadata = null;
-                let serverError = null;
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    if (cancelled) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-
-                    for (const line of lines) {
-                        if (!line.trim()) continue;
-
-                        let parsed;
+                    if (!response.ok) {
+                        let errorMessage = `HTTP ${response.status}`;
                         try {
-                            parsed = JSON.parse(line);
-                        } catch {
-                            continue;
+                            const errorData = await response.json();
+                            errorMessage = errorData.error || errorMessage;
+                        } catch {}
+                        throw new Error(errorMessage);
+                    }
+
+                    reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    const files = [];
+                    let metadata = null;
+                    let serverError = null;
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        if (cancelled) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
+
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+
+                            let parsed;
+                            try {
+                                parsed = JSON.parse(line);
+                            } catch {
+                                continue;
+                            }
+
+                            switch (parsed.type) {
+                                case 'queued':
+                                    setQueuePosition(parsed.queuePosition);
+                                    setStatus(`${t('queued-position')}: ${parsed.queuePosition}`);
+                                    setLastStatusData({ type: 'queued', position: parsed.queuePosition });
+                                    break;
+                                case 'queue-status':
+                                    setQueuePosition(parsed.queuePosition);
+                                    setStatus(`${t('queued-position')}: ${parsed.queuePosition}`);
+                                    setLastStatusData({ type: 'queued', position: parsed.queuePosition });
+                                    break;
+                                case 'started':
+                                    setQueuePosition(null);
+                                    setStatus(t('processing'));
+                                    setLastStatusData({ type: 'simple', key: 'processing' });
+                                    break;
+                                case 'meta':
+                                    metadata = parsed;
+                                    setNftInfo({
+                                        tokenId: parsed.tokenId,
+                                        backupCount: parsed.backupCount,
+                                        lastManifest: parsed.lastManifest || null,
+                                        lastMerkleRoot: parsed.lastMerkleRoot || null
+                                    });
+                                    setPreparedJobId(parsed.jobId);
+                                    try {
+                                        localStorage.setItem(
+                                            `permrepo-job-${repoName}`,
+                                            parsed.jobId
+                                        );
+                                    } catch {}
+                                    break;
+                                case 'file':
+                                    files.push(parsed.file);
+                                    break;
+                                case 'complete':
+                                    metadata = { ...metadata, ...parsed };
+                                    break;
+                                case 'error':
+                                    serverError = parsed.error;
+                                    break;
+                            }
+                        }
+                    }
+
+                    if (cancelled) return;
+
+                    if (serverError) {
+                        throw new Error(serverError);
+                    }
+
+                    if (!metadata) {
+                        throw new Error(t('backup-session-invalid'));
+                    }
+
+                    let previousPaths = {};
+                    let previousHistory = [];
+                    let previousEncryptionIVs = {};
+
+                    if (metadata.lastManifest && metadata.lastManifest.startsWith('ar://')) {
+                        const prevManifestId = metadata.lastManifest.slice(5);
+                        if (!isValidManifestId(prevManifestId)) {
+                            throw new Error(t('invalid-manifest'));
                         }
 
-                        switch (parsed.type) {
-                            case 'queued':
-                                setQueuePosition(parsed.queuePosition);
-                                setStatus(`${t('queued-position')}: ${parsed.queuePosition}`);
-                                setLastStatusData({ type: 'queued', position: parsed.queuePosition });
-                                break;
-                            case 'queue-status':
-                                setQueuePosition(parsed.queuePosition);
-                                setStatus(`${t('queued-position')}: ${parsed.queuePosition}`);
-                                setLastStatusData({ type: 'queued', position: parsed.queuePosition });
-                                break;
-                            case 'started':
-                                setQueuePosition(null);
-                                setStatus(t('processing'));
-                                setLastStatusData({ type: 'simple', key: 'processing' });
-                                break;
-                            case 'meta':
-                                metadata = parsed;
-                                setNftInfo({
-                                    tokenId: parsed.tokenId,
-                                    backupCount: parsed.backupCount,
-                                    lastManifest: parsed.lastManifest || null,
-                                    lastMerkleRoot: parsed.lastMerkleRoot || null
-                                });
-                                setPreparedJobId(parsed.jobId);
-                                try {
-                                    localStorage.setItem(
-                                        `permrepo-job-${repoName}`,
-                                        parsed.jobId
-                                    );
-                                } catch {}
-                                break;
-                            case 'file':
-                                files.push(parsed.file);
-                                break;
-                            case 'complete':
-                                metadata = { ...metadata, ...parsed };
-                                break;
-                            case 'error':
-                                serverError = parsed.error;
-                                break;
+                        setCurrentPreviousManifestId(prevManifestId);
+
+                        const manifestUrl = getValidatedManifestUrl(configData.arweaveGateway, prevManifestId);
+                        const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
+                        if (!manifestResponse.ok) throw new Error(t('manifest-load-failed'));
+
+                        const prevManifest = await manifestResponse.json();
+                        if (prevManifest && typeof prevManifest.paths === 'object' && !Array.isArray(prevManifest.paths)) {
+                            previousPaths = prevManifest.paths;
+                            setCurrentUnchangedFiles(prevManifest.paths);
+                        }
+                        if (Array.isArray(prevManifest?.history)) {
+                            previousHistory = prevManifest.history;
+                            setCurrentPreviousHistory(prevManifest.history);
+                        }
+                        if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object' && !Array.isArray(prevManifest.encryption.ivs)) {
+                            previousEncryptionIVs = prevManifest.encryption.ivs;
+                            setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
                         }
                     }
-                }
 
-                if (cancelled) return;
+                    const changedFiles = [];
+                    const unchangedFiles = {};
 
-                if (serverError) {
-                    throw new Error(serverError);
-                }
-
-                if (!metadata) {
-                    throw new Error(t('backup-session-invalid'));
-                }
-
-                let previousPaths = {};
-                let previousHistory = [];
-                let previousEncryptionIVs = {};
-
-                if (metadata.lastManifest && metadata.lastManifest.startsWith('ar://')) {
-                    const prevManifestId = metadata.lastManifest.slice(5);
-                    if (!isValidManifestId(prevManifestId)) {
-                        throw new Error(t('invalid-manifest'));
+                    for (const file of files) {
+                        const previousFile = previousPaths[file.path];
+                        if (previousFile && previousFile.hash && previousFile.hash === file.hash && isValidManifestId(previousFile.id || previousFile.zipId)) {
+                            unchangedFiles[file.path] = { id: previousFile.id || previousFile.zipId, hash: file.hash };
+                        } else {
+                            changedFiles.push(file);
+                        }
                     }
 
-                    setCurrentPreviousManifestId(prevManifestId);
-
-                    const manifestUrl = getValidatedManifestUrl(configData.arweaveGateway, prevManifestId);
-                    const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
-                    if (!manifestResponse.ok) throw new Error(t('manifest-load-failed'));
-
-                    const prevManifest = await manifestResponse.json();
-                    if (prevManifest && typeof prevManifest.paths === 'object' && !Array.isArray(prevManifest.paths)) {
-                        previousPaths = prevManifest.paths;
-                        setCurrentUnchangedFiles(prevManifest.paths);
-                    }
-                    if (Array.isArray(prevManifest?.history)) {
-                        previousHistory = prevManifest.history;
-                        setCurrentPreviousHistory(prevManifest.history);
-                    }
-                    if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object' && !Array.isArray(prevManifest.encryption.ivs)) {
-                        previousEncryptionIVs = prevManifest.encryption.ivs;
-                        setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
-                    }
+                    setCurrentPreviousBackupNumber(Number(metadata.backupCount || 0));
+                    setFileInfo({
+                        count: changedFiles.length,
+                        sizeText: formatFileSize(changedFiles.reduce((sum, file) => sum + Number(file.size), 0)),
+                        loading: false
+                    });
+                    setChangedFilesForUpload(changedFiles);
+                    setUnchangedFilesForUpload(unchangedFiles);
+                    
+                    setStatus('');
+                    setLastStatusData(null);
                 }
-
-                const changedFiles = [];
-                const unchangedFiles = {};
-
-                for (const file of files) {
-                    const previousFile = previousPaths[file.path];
-                    if (previousFile && previousFile.hash && previousFile.hash === file.hash && isValidManifestId(previousFile.id || previousFile.zipId)) {
-                        unchangedFiles[file.path] = { id: previousFile.id || previousFile.zipId, hash: file.hash };
-                    } else {
-                        changedFiles.push(file);
-                    }
-                }
-
-                setCurrentPreviousBackupNumber(Number(metadata.backupCount || 0));
-                setFileInfo({
-                    count: changedFiles.length,
-                    sizeText: formatFileSize(changedFiles.reduce((sum, file) => sum + Number(file.size), 0)),
-                    loading: false
-                });
-                setChangedFilesForUpload(changedFiles);
-                setUnchangedFilesForUpload(unchangedFiles);
-                
-                setStatus('');
-                setLastStatusData(null);
             } catch (e) {
                 if (cancelled) return;
                 setError(getSafeErrorMessage(e));
