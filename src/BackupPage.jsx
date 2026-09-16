@@ -108,12 +108,18 @@ function BackupPage() {
     const masterKeyRef = useRef(null);
     const uploadedZipRef = useRef({ txId: null, iv: null, merkleRoot: null });
     const uploadedManifestRef = useRef({ txId: null, manifest: null });
+    const submittedBackupTxHashRef = useRef(null);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
         let result;
         try { result = await response.json(); } catch { throw new Error(`Servera kļūda: HTTP ${response.status}`); }
-        if (!response.ok && !result.success) throw new Error(result.error || `HTTP ${response.status}`);
+        if (!response.ok && !result.success) {
+            const err = new Error(result.error || `HTTP ${response.status}`);
+            err.recoveryRequired = result.recoveryRequired;
+            err.backupTxHash = result.backupTxHash;
+            throw err;
+        }
         return result;
     }, []);
 
@@ -275,7 +281,7 @@ function BackupPage() {
         }
     }, [currentLanguage, lastStatusData, renderStatusFromData]);
 
-    // ✅ Init ar browser reload recovery
+    // ✅ Init ar browser reload recovery un localStorage tx hash
     useEffect(() => {
         let cancelled = false;
         let reader = null;
@@ -340,7 +346,7 @@ function BackupPage() {
                     }
                 }
 
-                // ✅ Browser reload recovery
+                // ✅ Recovery no localStorage
                 const storedJobId = localStorage.getItem(`permrepo-job-${repoName}`);
 
                 if (storedJobId) {
@@ -348,7 +354,6 @@ function BackupPage() {
                         const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
                         if (jobStatus.success) {
-                            // ✅ Job atrasts — recovery
                             setPreparedJobId(jobStatus.jobId);
                             setNftInfo({
                                 tokenId: jobStatus.tokenId,
@@ -357,19 +362,28 @@ function BackupPage() {
                                 lastMerkleRoot: jobStatus.merkleRoot || null
                             });
 
-                            // Saglabā recovery datus
+                            // ✅ Atjauno metadata
+                            if (jobStatus.changedFileMetadata?.length > 0) {
+                                setChangedFilesForUpload(jobStatus.changedFileMetadata);
+                            }
+                            if (jobStatus.unchangedFiles) {
+                                setUnchangedFilesForUpload(jobStatus.unchangedFiles);
+                            }
+
                             setRecoveredJobData(jobStatus);
 
-                            // Ja jau completed
+                            // ✅ Ja jau completed
                             if (jobStatus.status === 'completed') {
                                 setLastManifestTxId(jobStatus.manifestTxId);
                                 setBackupCompleted(true);
                                 setStatus(t('backup-complete'));
                                 setFileInfo({ count: 0, sizeText: '', loading: false });
+                                localStorage.removeItem(`permrepo-job-${repoName}`);
+                                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
                                 return;
                             }
 
-                            // Ja blockchain-finalizing ar backupTxHash — recovery
+                            // ✅ Ja blockchain-finalizing ar backupTxHash
                             if (
                                 jobStatus.status === 'blockchain-finalizing' &&
                                 jobStatus.backupTxHash
@@ -377,7 +391,6 @@ function BackupPage() {
                                 setStatus(t('checking-blockchain-tx'));
                                 setFileInfo({ count: 0, sizeText: '', loading: false });
 
-                                // Mēģina pabeigt recovery
                                 try {
                                     await apiJson('/api/complete-backup', {
                                         method: 'POST',
@@ -392,9 +405,9 @@ function BackupPage() {
                                     setBackupCompleted(true);
                                     setStatus(t('backup-complete'));
                                     localStorage.removeItem(`permrepo-job-${repoName}`);
+                                    localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
                                     return;
                                 } catch (recoveryError) {
-                                    // Recovery neizdevās — rāda recovery required
                                     setRecoveryRequired(true);
                                     setStatus(t('recovery-required'));
                                     setError(getSafeErrorMessage(recoveryError));
@@ -402,7 +415,7 @@ function BackupPage() {
                                 }
                             }
 
-                            // Ja failed — rāda retry
+                            // ✅ Ja failed — rāda retry
                             if (jobStatus.status === 'failed') {
                                 setBackupFailed(true);
                                 setStatus(t('backup-failed'));
@@ -410,7 +423,20 @@ function BackupPage() {
                                 return;
                             }
 
-                            // Ja zip-uploaded / manifest-uploaded — turpina no šī stāvokļa
+                            // ✅ Ja zip-uploading/manifest-uploading — reprepare
+                            if (
+                                jobStatus.status === 'zip-uploading' ||
+                                jobStatus.status === 'manifest-uploading'
+                            ) {
+                                // ✅ Reprepare — nevis turpināt
+                                setBackupFailed(true);
+                                setStatus(t('recovery-upload-incomplete'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                localStorage.removeItem(`permrepo-job-${repoName}`);
+                                return;
+                            }
+
+                            // ✅ Ja zip-uploaded/manifest-uploaded — var turpināt
                             if (
                                 jobStatus.status === 'zip-uploaded' ||
                                 jobStatus.status === 'manifest-uploaded'
@@ -419,19 +445,8 @@ function BackupPage() {
                                 setFileInfo({ count: 0, sizeText: '', loading: false });
                                 return;
                             }
-
-                            // Ja zip-uploading / manifest-uploading — turpina
-                            if (
-                                jobStatus.status === 'zip-uploading' ||
-                                jobStatus.status === 'manifest-uploading'
-                            ) {
-                                setStatus(t('recovery-ready'));
-                                setFileInfo({ count: 0, sizeText: '', loading: false });
-                                return;
-                            }
                         }
                     } catch (recoveryError) {
-                        // Job nav atrasts — notīra localStorage
                         localStorage.removeItem(`permrepo-job-${repoName}`);
                     }
                 }
@@ -504,7 +519,6 @@ function BackupPage() {
                                     lastMerkleRoot: parsed.lastMerkleRoot || null
                                 });
                                 setPreparedJobId(parsed.jobId);
-                                // ✅ Saglabā jobId localStorage
                                 try {
                                     localStorage.setItem(
                                         `permrepo-job-${repoName}`,
@@ -535,7 +549,6 @@ function BackupPage() {
                     throw new Error(t('backup-session-invalid'));
                 }
 
-                // Ielādē iepriekšējo manifestu
                 let previousPaths = {};
                 let previousHistory = [];
                 let previousEncryptionIVs = {};
@@ -733,16 +746,13 @@ function BackupPage() {
             let iv = uploadedZipRef.current.iv;
             let merkleRoot = uploadedZipRef.current.merkleRoot;
 
-            // ✅ Ja ZIP jau ir augšupielādēts (recovery), izmanto to
             if (zipTxId) {
-                // Sinhronizē ar serveri
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jobId, zipTxId })
                 });
             } else {
-                // ✅ 1. Sāk ZIP augšupielādi serverī
                 await apiJson('/api/start-zip-upload', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -813,7 +823,6 @@ function BackupPage() {
                 zipTxId = zipResult.id;
                 uploadedZipRef.current = { txId: zipTxId, iv, merkleRoot };
 
-                // ✅ 2. Saglabā ZIP tx ID serverī
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -827,7 +836,6 @@ function BackupPage() {
             let manifest = uploadedManifestRef.current.manifest;
             let manifestTxId = uploadedManifestRef.current.txId || recoveredJobData?.manifestTxId;
 
-            // ✅ Ja manifests jau ir (recovery), izmanto to
             if (manifestTxId && recoveredJobData?.manifest) {
                 manifest = recoveredJobData.manifest;
                 await apiJson('/api/save-manifest-tx', {
@@ -836,7 +844,6 @@ function BackupPage() {
                     body: JSON.stringify({ jobId, manifestTxId, manifest })
                 });
             } else if (!manifestTxId) {
-                // ✅ 3. Sāk manifesta augšupielādi
                 await apiJson('/api/start-manifest-upload', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -928,7 +935,6 @@ function BackupPage() {
                 manifestTxId = manifestResult.id;
                 uploadedManifestRef.current = { txId: manifestTxId, manifest };
 
-                // ✅ 4. Saglabā manifesta tx ID serverī
                 await apiJson('/api/save-manifest-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -990,7 +996,6 @@ function BackupPage() {
 
             const signature = await currentSigner.signTypedData(domain, types, value);
 
-            // ✅ 5. Sāk blockchain finalizāciju ar binding
             await apiJson('/api/start-blockchain-finalize', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1015,7 +1020,16 @@ function BackupPage() {
                 signature
             );
 
-            // ✅ 6. Saglabā backup tx hash PIRMS tx.wait()
+            // ✅ Saglabā tx.hash LOKĀLI un localStorage
+            submittedBackupTxHashRef.current = tx.hash;
+            try {
+                localStorage.setItem(
+                    `permrepo-backup-tx-${repoName}`,
+                    tx.hash
+                );
+            } catch {}
+
+            // ✅ Paziņo serverim PIRMS tx.wait()
             await apiJson('/api/save-backup-tx', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1027,7 +1041,6 @@ function BackupPage() {
 
             await tx.wait();
 
-            // ✅ 7. Complete backup
             let redisCompleted = false;
             try {
                 await apiJson('/api/complete-backup', {
@@ -1053,6 +1066,7 @@ function BackupPage() {
             // ✅ Notīra localStorage
             try {
                 localStorage.removeItem(`permrepo-job-${repoName}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
             } catch {}
 
             setNftInfo({
@@ -1067,12 +1081,19 @@ function BackupPage() {
             setStatus(t('backup-complete'));
             setLastStatusData({ type: 'success', key: 'backup-complete' });
         } catch (e) {
-            // ✅ Ja tx.hash jau ir saglabāts, NEDRĪKST saukt fail-backup
-            const txHashSaved = uploadedZipRef.current.txId && recoveredJobData?.backupTxHash;
-
-            if (!txHashSaved) {
+            // ✅ Ja tx.hash jau ir saglabāts — recovery required
+            if (submittedBackupTxHashRef.current) {
+                setRecoveryRequired(true);
+                setStatus(t('recovery-required'));
+                setRecoveredJobData(prev => ({
+                    ...prev,
+                    jobId,
+                    backupTxHash: submittedBackupTxHashRef.current
+                }));
+            } else {
+                // ✅ Tikai tad fail-backup
                 try {
-                    await apiJson('/api/fail-backup', {
+                    const failResponse = await apiJson('/api/fail-backup', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -1080,13 +1101,33 @@ function BackupPage() {
                             error: getSafeErrorMessage(e)
                         })
                     });
-                } catch {
-                    // Ignorē
+
+                    // ✅ Ja serveris saka recovery required — nevis failed
+                    if (failResponse.recoveryRequired) {
+                        setRecoveryRequired(true);
+                        setStatus(t('recovery-required'));
+                        setRecoveredJobData(prev => ({
+                            ...prev,
+                            jobId,
+                            backupTxHash: failResponse.backupTxHash
+                        }));
+                    } else {
+                        setBackupFailed(true);
+                    }
+                } catch (failError) {
+                    // Ja fail-backup neizdodas, bet ir recoveryRequired
+                    if (failError.recoveryRequired) {
+                        setRecoveryRequired(true);
+                        setStatus(t('recovery-required'));
+                        setRecoveredJobData(prev => ({
+                            ...prev,
+                            jobId,
+                            backupTxHash: failError.backupTxHash
+                        }));
+                    } else {
+                        setBackupFailed(true);
+                    }
                 }
-                setBackupFailed(true);
-            } else {
-                setRecoveryRequired(true);
-                setStatus(t('recovery-required'));
             }
 
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
@@ -1105,7 +1146,6 @@ function BackupPage() {
         userAddress, recoveredJobData
     ]);
 
-    // ✅ Retry
     const retryBackup = useCallback(async () => {
         if (!preparedJobId) {
             setError(t('backup-session-invalid'));
@@ -1126,6 +1166,11 @@ function BackupPage() {
 
             uploadedZipRef.current = { txId: null, iv: null, merkleRoot: null };
             uploadedManifestRef.current = { txId: null, manifest: null };
+            submittedBackupTxHashRef.current = null;
+
+            try {
+                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+            } catch {}
 
             setStatus(t('retry-ready'));
             setLastStatusData({ type: 'simple', key: 'retry-ready' });
@@ -1134,11 +1179,13 @@ function BackupPage() {
             setError(getSafeErrorMessage(e));
             setIsWorking(false);
         }
-    }, [preparedJobId, apiJson, t]);
+    }, [preparedJobId, apiJson, t, repoName]);
 
-    // ✅ Recovery — pabeidz backup ar jau iesniegto tx
     const recoverBackup = useCallback(async () => {
-        if (!recoveredJobData?.backupTxHash) {
+        const txHash = recoveredJobData?.backupTxHash ||
+            localStorage.getItem(`permrepo-backup-tx-${repoName}`);
+
+        if (!txHash) {
             setError(t('no-backup-tx'));
             return;
         }
@@ -1151,16 +1198,17 @@ function BackupPage() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    jobId: recoveredJobData.jobId,
-                    txHash: recoveredJobData.backupTxHash
+                    jobId: recoveredJobData?.jobId || preparedJobId,
+                    txHash
                 })
             });
 
             try {
                 localStorage.removeItem(`permrepo-job-${repoName}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
             } catch {}
 
-            setLastManifestTxId(recoveredJobData.manifestTxId);
+            setLastManifestTxId(recoveredJobData?.manifestTxId);
             setBackupCompleted(true);
             setStatus(t('backup-complete'));
             setLastStatusData({ type: 'success', key: 'backup-complete' });
@@ -1169,7 +1217,7 @@ function BackupPage() {
             setError(getSafeErrorMessage(e));
             setIsWorking(false);
         }
-    }, [recoveredJobData, apiJson, t, repoName]);
+    }, [recoveredJobData, preparedJobId, apiJson, t, repoName]);
 
     if (!config) {
         return (
@@ -1233,8 +1281,7 @@ function BackupPage() {
                 </>
             )}
             
-            {/* ✅ Recovery poga, ja blockchain tx eksistē */}
-            {recoveryRequired && recoveredJobData?.backupTxHash ? (
+            {recoveryRequired && (recoveredJobData?.backupTxHash || localStorage.getItem(`permrepo-backup-tx-${repoName}`)) ? (
                 <button 
                     onClick={recoverBackup}
                     disabled={isWorking}
