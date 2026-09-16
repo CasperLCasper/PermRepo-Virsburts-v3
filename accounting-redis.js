@@ -9,7 +9,7 @@ import crypto from 'crypto';
 
 let redis = null;
 
-const DEFAULT_JOB_TTL = Number(process.env.JOB_TTL_SECONDS || 3600);
+const DEFAULT_JOB_TTL = Number(process.env.JOB_TTL_SECONDS || 7200);
 const JOB_LOCK_TTL = Number(process.env.JOB_LOCK_TTL_SECONDS || 600);
 
 function jobKey(jobId) {
@@ -257,7 +257,6 @@ export async function updateJob(
         );
     }
 
-    // ✅ Atomic update ar retry
     const maxRetries = 3;
     let lastError = null;
 
@@ -271,9 +270,8 @@ export async function updateJob(
                 );
             }
 
-            // ✅ State validācija
             if (patch.status && patch.status !== current.status) {
-                // ✅ Failed ierobežojums: neļauj failed no blockchain-finalizing ar backupTxHash
+                // ✅ Failed ierobežojums
                 if (
                     patch.status === 'failed' &&
                     current.status === 'blockchain-finalizing' &&
@@ -305,7 +303,6 @@ export async function updateJob(
         } catch (error) {
             lastError = error;
             
-            // Ja tā ir state transition kļūda, nav jēgas atkārtot
             if (
                 error.message &&
                 (error.message.includes('Nederīga state pāreja') ||
@@ -315,7 +312,6 @@ export async function updateJob(
                 throw error;
             }
             
-            // Ja tā ir cita kļūda, mēģina vēlreiz
             if (attempt < maxRetries - 1) {
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
@@ -390,9 +386,6 @@ export async function acquireJobLock(
     }
 }
 
-/**
- * Pagarina job lock TTL
- */
 export async function extendJobLock(
     jobId,
     token,
