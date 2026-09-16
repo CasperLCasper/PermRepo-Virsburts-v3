@@ -1874,6 +1874,29 @@ app.get('/api/job-status', async (req, res) => {
 
         await verifyJobAuthorization(req, job);
 
+        // ✅ Drošā versija: iegūst on-chain backupCount tikai ja tokenId eksistē
+        let backupCount = null;
+
+        if (job.tokenId != null) {
+            try {
+                const provider = getProvider();
+                const nftContract = new ethers.Contract(
+                    NFT_ADDRESS,
+                    NFT_ABI,
+                    provider
+                );
+
+                const onChainBackupCount = await nftContract.getBackupCount(
+                    BigInt(job.tokenId)
+                );
+
+                backupCount = onChainBackupCount.toString();
+            } catch (rpcError) {
+                console.warn('Neizdevās iegūt on-chain backupCount:', rpcError);
+                backupCount = null;
+            }
+        }
+
         // ✅ Atgriež metadata (bez base64 satura)
         return res.json({
             success: true,
@@ -1885,14 +1908,15 @@ app.get('/api/job-status', async (req, res) => {
             walletAddress: job.walletAddress,
             zipTxId: job.zipTxId || null,
             manifestTxId: job.manifestTxId || null,
-            backupNumber: job.backupNumber || null,
+            // ✅ Atgriež abus
+            backupCount,                                    // ← on-chain count (JAUNS)
+            backupNumber: job.backupNumber || null,         // ← konkrētā job numurs
             manifestHash: job.manifestHash || null,
             merkleRoot: job.merkleRoot || null,
             manifestURI: job.manifestURI || null,
             deadline: job.deadline || null,
             backupTxHash: job.backupTxHash || null,
             completionTxHash: job.completionTxHash || null,
-            // ✅ METADATA — nevis base64 saturs
             changedFileMetadata: job.changedFileMetadata || [],
             unchangedFiles: job.unchangedFiles || {},
             error: job.error || null,
