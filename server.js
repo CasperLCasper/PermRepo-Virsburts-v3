@@ -70,7 +70,7 @@ const RESOURCE_QUEUE_HEARTBEAT_MS = Number(
     process.env.RESOURCE_QUEUE_HEARTBEAT_MS || 15000
 );
 
-const JOB_TTL_SECONDS = Number(process.env.JOB_TTL_SECONDS || 3600);
+const JOB_TTL_SECONDS = Number(process.env.JOB_TTL_SECONDS || 7200);
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 3600);
 const LOCK_HEARTBEAT_MS = Number(process.env.LOCK_HEARTBEAT_MS || 60000);
 const DOWNLOAD_CONCURRENCY = 3;
@@ -503,9 +503,7 @@ function getAllowedConnectOrigins() {
             if (value) {
                 origins.add(new URL(value).origin);
             }
-        } catch {
-            // Ignorē
-        }
+        } catch {}
     }
 
     return [...origins].join(' ');
@@ -1730,9 +1728,9 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             });
         });
 
-        // ✅ Job ar blockchain binding laukiem
+        // ✅ Job satur TIKAI metadata (bez base64 satura)
         const job = {
-            version: 5,
+            version: 6,
             jobId,
             githubUser,
             repoName,
@@ -1746,12 +1744,17 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             onChainBackupCount: backupCount.toString(),
             lastManifest: lastManifest || null,
             lastMerkleRoot: lastMerkleRoot || null,
-            changedFiles: jobFiles,
+            // ✅ TIKAI METADATA — bez base64 satura
+            changedFileMetadata: jobFiles.map(f => ({
+                path: f.path,
+                hash: f.hash,
+                size: f.size
+            })),
+            unchangedFiles: {},
             status: 'prepared',
             zipTxId: null,
             manifestTxId: null,
             manifest: null,
-            // ✅ Blockchain binding
             backupNumber: null,
             manifestHash: null,
             merkleRoot: null,
@@ -1871,7 +1874,7 @@ app.get('/api/job-status', async (req, res) => {
 
         await verifyJobAuthorization(req, job);
 
-        // ✅ Atgriež tikai recovery vajadzīgos datus
+        // ✅ Atgriež metadata (bez base64 satura)
         return res.json({
             success: true,
             jobId: job.jobId,
@@ -1889,6 +1892,9 @@ app.get('/api/job-status', async (req, res) => {
             deadline: job.deadline || null,
             backupTxHash: job.backupTxHash || null,
             completionTxHash: job.completionTxHash || null,
+            // ✅ METADATA — nevis base64 saturs
+            changedFileMetadata: job.changedFileMetadata || [],
+            unchangedFiles: job.unchangedFiles || {},
             error: job.error || null,
             failedAt: job.failedAt || null
         });
@@ -2169,7 +2175,6 @@ app.post('/api/start-blockchain-finalize', backupLimiter, async (req, res) => {
             deadline
         } = req.body;
 
-        // ✅ Validācija
         if (!validateJobId(jobId)) {
             return res.status(400).json({
                 success: false,
@@ -2265,7 +2270,6 @@ app.post('/api/start-blockchain-finalize', backupLimiter, async (req, res) => {
                 throw new Error('Manifest hash nesakrīt ar manifest URI.');
             }
 
-            // ✅ Pārbauda on-chain backup count
             const provider = getProvider();
             const nftContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
             const onChainBackupCount = await nftContract.getBackupCount(
@@ -2409,13 +2413,18 @@ app.post('/api/complete-backup', backupLimiter, async (req, res) => {
                 walletAddress: wallet
             });
 
-            // ✅ Ja jau completed — idempotents
+            // ✅ Idempotence
             if (job.status === 'completed') {
-                return res.json({
-                    success: true,
-                    status: 'completed',
-                    alreadyCompleted: true
-                });
+                if (job.completionTxHash === txHash) {
+                    return res.json({
+                        success: true,
+                        status: 'completed',
+                        alreadyCompleted: true
+                    });
+                }
+                throw new Error(
+                    'Job jau ir completed ar citu transakcijas hash.'
+                );
             }
 
             if (job.status !== 'blockchain-finalizing') {
@@ -2424,14 +2433,12 @@ app.post('/api/complete-backup', backupLimiter, async (req, res) => {
                 );
             }
 
-            // ✅ Ja backupTxHash ir saglabāts, tam jāsakrīt
             if (job.backupTxHash && job.backupTxHash !== txHash) {
                 throw new Error(
                     'Transakcijas hash nesakrīt ar saglabāto backup tx hash.'
                 );
             }
 
-            // ✅ Pārbauda blockchain transakciju
             const provider = getProvider();
             let receipt;
 
@@ -2462,15 +2469,18 @@ app.post('/api/complete-backup', backupLimiter, async (req, res) => {
             let backupAddedEvent = null;
 
             for (const log of receipt.logs) {
+                // ✅ Ierobežo log.address
+                if (log.address.toLowerCase() !== NFT_ADDRESS.toLowerCase()) {
+                    continue;
+                }
+                
                 try {
                     const parsed = iface.parseLog(log);
                     if (parsed && parsed.name === 'BackupAdded') {
                         backupAddedEvent = parsed;
                         break;
                     }
-                } catch {
-                    // Nav mūsu event
-                }
+                } catch {}
             }
 
             if (!backupAddedEvent) {
@@ -2500,25 +2510,9 @@ app.post('/api/complete-backup', backupLimiter, async (req, res) => {
                 throw new Error('BackupAdded manifestURI nesakrīt.');
             }
 
-            // ✅ Papildu pārbaude — on-chain state
-            const nftContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
+            // ❌ NOŅEMTS: on-chain state pārbaudes
+            // (getManifestURI, getLastMerkleRoot, getBackupCount)
 
-            const onChainManifestURI = await nftContract.getManifestURI(BigInt(job.tokenId));
-            if (onChainManifestURI !== job.manifestURI) {
-                throw new Error('On-chain manifest URI nesakrīt ar job.');
-            }
-
-            const onChainMerkleRoot = await nftContract.getLastMerkleRoot(BigInt(job.tokenId));
-            if (onChainMerkleRoot.toLowerCase() !== job.merkleRoot.toLowerCase()) {
-                throw new Error('On-chain Merkle root nesakrīt ar job.');
-            }
-
-            const onChainBackupCount = await nftContract.getBackupCount(BigInt(job.tokenId));
-            if (onChainBackupCount.toString() !== String(job.backupNumber)) {
-                throw new Error('On-chain backup count nesakrīt ar job.');
-            }
-
-            // ✅ Atjauno job statusu
             await updateJob(jobId, {
                 status: 'completed',
                 completionTxHash: txHash,
@@ -2574,7 +2568,6 @@ app.post('/api/fail-backup', backupLimiter, async (req, res) => {
 
             await verifyJobAuthorization(req, job);
 
-            // ✅ Ja jau completed — nevar mainīt
             if (job.status === 'completed') {
                 return res.json({
                     success: true,
@@ -2583,7 +2576,6 @@ app.post('/api/fail-backup', backupLimiter, async (req, res) => {
                 });
             }
 
-            // ✅ Ja jau failed — idempotents
             if (job.status === 'failed') {
                 return res.json({
                     success: true,
@@ -2592,7 +2584,7 @@ app.post('/api/fail-backup', backupLimiter, async (req, res) => {
                 });
             }
 
-            // ✅ Kritiski: neļauj failed no blockchain-finalizing ar backupTxHash
+            // ✅ Neļauj failed no blockchain-finalizing ar backupTxHash
             if (
                 job.status === 'blockchain-finalizing' &&
                 job.backupTxHash
@@ -2657,7 +2649,6 @@ app.post('/api/retry-backup', backupLimiter, async (req, res) => {
                 );
             }
 
-            // ✅ Notīra iepriekšējo progresu
             await updateJob(jobId, {
                 status: 'prepared',
                 error: null,
@@ -2733,6 +2724,7 @@ app.listen(PORT, () => {
     logInfo('Resource memory multiplier', RESOURCE_MEMORY_MULTIPLIER);
     logInfo('Max backup queue', MAX_BACKUP_QUEUE);
     logInfo('Lock heartbeat', `${LOCK_HEARTBEAT_MS}ms`);
+    logInfo('Job TTL', `${JOB_TTL_SECONDS}s (${JOB_TTL_SECONDS / 3600}h)`);
     logInfo('Redis', '✅ IR');
     logInfo('RPC', RPC_URL);
     logInfo('NFT', NFT_ADDRESS || '❌ NAV');
