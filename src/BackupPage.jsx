@@ -355,8 +355,10 @@ function BackupPage() {
                         const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
                         if (jobStatus.success) {
-                            // ✅ ZIP/MANIFEST UPLOADING — sāk pilnīgi jaunu prepare-backup
+                            // ✅ #5 LABOJUMS: prepared arī sāk jaunu
+                            // ✅ ZIP/MANIFEST UPLOADING vai PREPARED — sāk pilnīgi jaunu prepare-backup
                             if (
+                                jobStatus.status === 'prepared' ||
                                 jobStatus.status === 'zip-uploading' ||
                                 jobStatus.status === 'manifest-uploading'
                             ) {
@@ -371,7 +373,7 @@ function BackupPage() {
                                 setPreparedJobId(jobStatus.jobId);
                                 setNftInfo({
                                     tokenId: jobStatus.tokenId,
-                                    backupCount: jobStatus.backupCount || null,  // ← Tagad ir!
+                                    backupCount: jobStatus.backupCount || null,
                                     lastManifest: jobStatus.manifestURI || null,
                                     lastMerkleRoot: jobStatus.merkleRoot || null
                                 });
@@ -382,6 +384,68 @@ function BackupPage() {
                                 }
                                 if (jobStatus.unchangedFiles) {
                                     setUnchangedFilesForUpload(jobStatus.unchangedFiles);
+                                }
+
+                                // ✅ #3 LABOJUMS: atjauno uploadedZipRef no jobStatus
+                                if (jobStatus.zipTxId) {
+                                    uploadedZipRef.current = {
+                                        txId: jobStatus.zipTxId,
+                                        iv: jobStatus.zipIv || null,
+                                        merkleRoot: jobStatus.zipMerkleRoot || null
+                                    };
+                                }
+
+                                // ✅ #2 LABOJUMS: ielādē iepriekšējo manifestu no lastManifest
+                                // (nevis manifestURI!) — visiem recovery statusiem
+                                if (
+                                    jobStatus.status === 'zip-uploaded' ||
+                                    jobStatus.status === 'manifest-uploaded' ||
+                                    jobStatus.status === 'blockchain-finalizing'
+                                ) {
+                                    if (jobStatus.lastManifest?.startsWith('ar://')) {
+                                        const prevManifestId = jobStatus.lastManifest.slice(5);
+                                        
+                                        if (isValidManifestId(prevManifestId)) {
+                                            setCurrentPreviousManifestId(prevManifestId);
+                                            
+                                            try {
+                                                const manifestUrl = getValidatedManifestUrl(
+                                                    configData.arweaveGateway,
+                                                    prevManifestId
+                                                );
+                                                const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
+                                                
+                                                if (manifestResponse.ok) {
+                                                    const prevManifest = await manifestResponse.json();
+                                                    
+                                                    // ✅ Ielādē history ķēdi
+                                                    if (Array.isArray(prevManifest?.history)) {
+                                                        setCurrentPreviousHistory(prevManifest.history);
+                                                    }
+                                                    
+                                                    // ✅ Ielādē encryption IVs
+                                                    if (
+                                                        prevManifest?.encryption?.ivs &&
+                                                        typeof prevManifest.encryption.ivs === 'object' &&
+                                                        !Array.isArray(prevManifest.encryption.ivs)
+                                                    ) {
+                                                        setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
+                                                    }
+                                                    
+                                                    // ✅ Ielādē previous paths (changed/unchanged sadalījumam)
+                                                    if (
+                                                        prevManifest?.paths &&
+                                                        typeof prevManifest.paths === 'object' &&
+                                                        !Array.isArray(prevManifest.paths)
+                                                    ) {
+                                                        setCurrentUnchangedFiles(prevManifest.paths);
+                                                    }
+                                                }
+                                            } catch (manifestError) {
+                                                console.warn('Neizdevās ielādēt iepriekšējo manifestu:', manifestError);
+                                            }
+                                        }
+                                    }
                                 }
 
                                 setRecoveredJobData(jobStatus);
@@ -443,7 +507,13 @@ function BackupPage() {
                                     jobStatus.status === 'manifest-uploaded'
                                 ) {
                                     setStatus(t('recovery-ready'));
-                                    setFileInfo({ count: 0, sizeText: '', loading: false });
+                                    setFileInfo({
+                                        count: Array.isArray(jobStatus.changedFileMetadata)
+                                            ? jobStatus.changedFileMetadata.length
+                                            : 0,
+                                        sizeText: '',
+                                        loading: false
+                                    });
                                     return;
                                 }
                             }
@@ -690,9 +760,17 @@ function BackupPage() {
                 paymentServiceConfig: { url: config.turboPaymentUrl }
             });
             const backupCount = Number(nftInfo.backupCount || 0);
+            
+            // ✅ #4 LABOJUMS: ja ZIP jau eksistē (recovery), tas NAV "new first backup"
+            const isRecoveryWithExistingZip = Boolean(
+                recoveredJobData?.zipTxId ||
+                uploadedZipRef.current.txId
+            );
+
             let keyHex;
             
-            if (backupCount === 0) {
+            if (backupCount === 0 && !isRecoveryWithExistingZip) {
+                // ✅ Patiešām jauns pirmais backup — ģenerē jaunu atslēgu
                 if (!masterKeyRef.current) {
                     const keyBytes = crypto.getRandomValues(new Uint8Array(32));
                     masterKeyRef.current = ethers.hexlify(keyBytes);
@@ -705,6 +783,7 @@ function BackupPage() {
                 }
                 keyHex = masterKeyRef.current;
             } else {
+                // ✅ Recovery VAI ne-pirmais backup — prasa ESOŠO atslēgu
                 keyHex = await promptMasterKey();
                 if (!isValidMasterKey(keyHex)) {
                     setError(t('encrypted-required'));
@@ -762,7 +841,7 @@ function BackupPage() {
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jobId, zipTxId })
+                    body: JSON.stringify({ jobId, zipTxId, iv, merkleRoot })
                 });
             } else {
                 await apiJson('/api/start-zip-upload', {
@@ -835,10 +914,16 @@ function BackupPage() {
                 zipTxId = zipResult.id;
                 uploadedZipRef.current = { txId: zipTxId, iv, merkleRoot };
 
+                // ✅ #3 LABOJUMS: sūta arī iv un merkleRoot
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jobId, zipTxId })
+                    body: JSON.stringify({
+                        jobId,
+                        zipTxId,
+                        iv: iv ? Array.from(iv) : null,
+                        merkleRoot: merkleRoot || null
+                    })
                 });
             }
             
