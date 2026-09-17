@@ -460,6 +460,80 @@ function getProvider() {
     return new ethers.JsonRpcProvider(RPC_URL, EXPECTED_CHAIN_ID);
 }
 
+// ✅ Droša Arweave manifesta ielāde (servera pusē)
+function getValidatedManifestUrl(manifestId) {
+    if (!validateArweaveId(manifestId)) {
+        throw new Error('Nederīgs manifesta ID.');
+    }
+
+    if (!ARWEAVE_GATEWAY) {
+        throw new Error('ARWEAVE_GATEWAY nav iestatīts.');
+    }
+
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(ARWEAVE_GATEWAY);
+    } catch {
+        throw new Error('Nederīgs ARWEAVE_GATEWAY URL.');
+    }
+
+    if (parsedUrl.protocol !== 'https:') {
+        throw new Error('ARWEAVE_GATEWAY jābūt https.');
+    }
+
+    return `${parsedUrl.origin}/raw/${encodeURIComponent(manifestId)}`;
+}
+
+async function loadPreviousManifest(lastManifest) {
+    if (
+        typeof lastManifest !== 'string' ||
+        !lastManifest.startsWith('ar://')
+    ) {
+        return null;
+    }
+
+    const prevManifestId = lastManifest.slice(5);
+
+    if (!validateArweaveId(prevManifestId)) {
+        console.warn('Nederīgs iepriekšējā manifesta ID:', prevManifestId);
+        return null;
+    }
+
+    try {
+        const manifestUrl = getValidatedManifestUrl(prevManifestId);
+        const response = await fetch(manifestUrl, {
+            cache: 'no-store',
+            signal: AbortSignal.timeout(30000)
+        });
+
+        if (!response.ok) {
+            console.warn(
+                'Neizdevās ielādēt iepriekšējo manifestu:',
+                response.status
+            );
+            return null;
+        }
+
+        const manifest = await response.json();
+
+        if (
+            !manifest ||
+            typeof manifest !== 'object' ||
+            Array.isArray(manifest)
+        ) {
+            return null;
+        }
+
+        return manifest;
+    } catch (error) {
+        console.warn(
+            'Kļūda, ielādējot iepriekšējo manifestu:',
+            errorMessage(error)
+        );
+        return null;
+    }
+}
+
 const NFT_ABI = [
     'function repositoryTokens(bytes32 repoHash) external view returns (uint256)',
     'function ownerOf(uint256 tokenId) external view returns (address)',
@@ -1620,6 +1694,16 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             maxFileBytes = Math.max(maxFileBytes, blob.size);
         }
 
+        // ✅ #1 LABOJUMS: Serveris ielādē iepriekšējo manifestu un sadala changed/unchanged
+        const previousManifest = await loadPreviousManifest(lastManifest);
+        const previousPaths =
+            previousManifest &&
+            previousManifest.paths &&
+            typeof previousManifest.paths === 'object' &&
+            !Array.isArray(previousManifest.paths)
+                ? previousManifest.paths
+                : {};
+
         const reservationBytes = backupResourceController.estimateMemoryBytes(maxFileBytes);
         const jobId = crypto.randomUUID();
         const now = Date.now();
@@ -1695,6 +1779,8 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
         );
 
         const jobFiles = [];
+        const changedFileMetadata = [];
+        const unchangedFiles = {};
         let totalBytes = 0;
 
         await writeNdjson(res, {
@@ -1720,6 +1806,26 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
                 size: file.size
             });
 
+            // ✅ #1 LABOJUMS: Sadala changed/unchanged servera pusē
+            const previousFile = previousPaths[file.path];
+
+            if (
+                previousFile &&
+                previousFile.hash === file.hash &&
+                validateArweaveId(previousFile.id || previousFile.zipId)
+            ) {
+                unchangedFiles[file.path] = {
+                    id: previousFile.id || previousFile.zipId,
+                    hash: file.hash
+                };
+            } else {
+                changedFileMetadata.push({
+                    path: file.path,
+                    hash: file.hash,
+                    size: file.size
+                });
+            }
+
             totalBytes += file.size;
 
             await writeNdjson(res, {
@@ -1729,8 +1835,9 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
         });
 
         // ✅ Job satur TIKAI metadata (bez base64 satura)
+        // ✅ #1 LABOJUMS: changedFileMetadata satur TIKAI changed failus
         const job = {
-            version: 6,
+            version: 7,
             jobId,
             githubUser,
             repoName,
@@ -1744,15 +1851,13 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             onChainBackupCount: backupCount.toString(),
             lastManifest: lastManifest || null,
             lastMerkleRoot: lastMerkleRoot || null,
-            // ✅ TIKAI METADATA — bez base64 satura
-            changedFileMetadata: jobFiles.map(f => ({
-                path: f.path,
-                hash: f.hash,
-                size: f.size
-            })),
-            unchangedFiles: {},
+            // ✅ TIKAI changed failu metadata
+            changedFileMetadata,
+            unchangedFiles,
             status: 'prepared',
             zipTxId: null,
+            zipIv: null,                // ✅ #3 LABOJUMS
+            zipMerkleRoot: null,        // ✅ #3 LABOJUMS
             manifestTxId: null,
             manifest: null,
             backupNumber: null,
@@ -1782,6 +1887,8 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             lastManifest: lastManifest || null,
             lastMerkleRoot: lastMerkleRoot || null,
             fileCount: jobFiles.length,
+            changedFileCount: changedFileMetadata.length,
+            unchangedFileCount: Object.keys(unchangedFiles).length,
             totalBytes
         });
 
@@ -1907,13 +2014,16 @@ app.get('/api/job-status', async (req, res) => {
             tokenId: job.tokenId,
             walletAddress: job.walletAddress,
             zipTxId: job.zipTxId || null,
+            zipIv: job.zipIv || null,                       // ✅ #3 LABOJUMS
+            zipMerkleRoot: job.zipMerkleRoot || null,       // ✅ #3 LABOJUMS
             manifestTxId: job.manifestTxId || null,
-            // ✅ Atgriež abus
-            backupCount,                                    // ← on-chain count (JAUNS)
+            backupCount,                                    // ← on-chain count
             backupNumber: job.backupNumber || null,         // ← konkrētā job numurs
             manifestHash: job.manifestHash || null,
             merkleRoot: job.merkleRoot || null,
             manifestURI: job.manifestURI || null,
+            lastManifest: job.lastManifest || null,         // ✅ #2 LABOJUMS (jau bija)
+            lastMerkleRoot: job.lastMerkleRoot || null,
             deadline: job.deadline || null,
             backupTxHash: job.backupTxHash || null,
             completionTxHash: job.completionTxHash || null,
@@ -1990,9 +2100,37 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
         assertSameOrigin(req);
         if (!requireGithubSession(req, res)) return;
 
-        const { jobId, zipTxId } = req.body;
+        // ✅ #3 LABOJUMS: pieņem arī iv un merkleRoot
+        const { jobId, zipTxId, iv, merkleRoot } = req.body;
 
         validateJobTxInput(jobId, zipTxId);
+
+        // IV validācija (ja padots)
+        let normalizedIV = null;
+        if (iv !== undefined && iv !== null) {
+            if (!Array.isArray(iv) || iv.length !== 12) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs IV (jābūt 12 baitu masīvam).'
+                });
+            }
+            normalizedIV = iv.map(b => Number(b) & 0xff);
+        }
+
+        // Merkle root validācija (ja padots)
+        let normalizedMerkleRoot = null;
+        if (merkleRoot !== undefined && merkleRoot !== null) {
+            if (
+                typeof merkleRoot !== 'string' ||
+                !/^0x[0-9a-fA-F]{64}$/.test(merkleRoot)
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Nederīgs Merkle root.'
+                });
+            }
+            normalizedMerkleRoot = merkleRoot;
+        }
 
         return await withJobLock(jobId, async () => {
             const job = await getJob(jobId);
@@ -2029,8 +2167,11 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                 );
             }
 
+            // ✅ #3 LABOJUMS: saglabā arī zipIv un zipMerkleRoot
             await updateJob(jobId, {
                 zipTxId,
+                zipIv: normalizedIV,
+                zipMerkleRoot: normalizedMerkleRoot,
                 status: 'zip-uploaded',
                 zipUploadedAt: Date.now(),
                 updatedAt: Date.now()
@@ -2678,6 +2819,8 @@ app.post('/api/retry-backup', backupLimiter, async (req, res) => {
                 error: null,
                 failedAt: null,
                 zipTxId: null,
+                zipIv: null,                // ✅ #3 LABOJUMS
+                zipMerkleRoot: null,        // ✅ #3 LABOJUMS
                 manifestTxId: null,
                 manifest: null,
                 backupNumber: null,
