@@ -354,7 +354,18 @@ function BackupPage() {
                     try {
                         const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
+                        // ✅ 1. LOGS
+                        console.log('1. RECOVERY jobStatus:', jobStatus);
+
                         if (jobStatus.success) {
+                            // ✅ 1b. LOGS
+                            console.log('1b. RECOVERY status:', {
+                                status: jobStatus.status,
+                                jobId: jobStatus.jobId,
+                                zipTxId: jobStatus.zipTxId,
+                                manifestTxId: jobStatus.manifestTxId
+                            });
+
                             // ✅ #5 LABOJUMS: prepared arī sāk jaunu
                             // ✅ ZIP/MANIFEST UPLOADING vai PREPARED — sāk pilnīgi jaunu prepare-backup
                             if (
@@ -703,6 +714,12 @@ function BackupPage() {
     }, [apiJson, repoName, t, formatFileSize]);
 
     const continueBackup = useCallback(async () => {
+        // ✅ 2. LOGS
+        console.log('2. CONTINUE BACKUP:', {
+            recoveredJobData,
+            uploadedZipRef: uploadedZipRef.current
+        });
+
         if (!config) {
             setError('Konfigurācija vēl nav ielādēta!');
             return;
@@ -824,6 +841,12 @@ function BackupPage() {
         client,
         signerInstance
     ) => {
+        // ✅ 3. LOGS
+        console.log('3. UPLOAD ZIP INPUT:', {
+            uploadedZipRef: uploadedZipRef.current,
+            recoveredJobData
+        });
+
         if (!config || !jobId || !nftInfo.tokenId) {
             setError(t('backup-session-invalid'));
             return;
@@ -836,6 +859,12 @@ function BackupPage() {
             let zipTxId = uploadedZipRef.current.txId || recoveredJobData?.zipTxId;
             let iv = uploadedZipRef.current.iv;
             let merkleRoot = uploadedZipRef.current.merkleRoot;
+
+            // ✅ 4. LOGS
+            console.log('4. UPLOAD ZIP DECISION:', {
+                zipTxId,
+                willCreateNewZip: !zipTxId
+            });
 
             if (zipTxId) {
                 await apiJson('/api/save-zip-tx', {
