@@ -367,11 +367,11 @@ function BackupPage() {
                             });
 
                             // ✅ #5 LABOJUMS: prepared arī sāk jaunu
-                            // ✅ ZIP/MANIFEST UPLOADING vai PREPARED — sāk pilnīgi jaunu prepare-backup
+                            // ✅ ZIP UPLOADING vai PREPARED — sāk pilnīgi jaunu prepare-backup
+                            // ✅ manifest-uploading TAGAD nonāk else zarā (jo ZIP jau ir augšupielādēts)
                             if (
                                 jobStatus.status === 'prepared' ||
-                                jobStatus.status === 'zip-uploading' ||
-                                jobStatus.status === 'manifest-uploading'
+                                jobStatus.status === 'zip-uploading'
                             ) {
                                 // ✅ Notīra localStorage
                                 localStorage.removeItem(`permrepo-job-${repoName}`);
@@ -380,7 +380,7 @@ function BackupPage() {
                                 // ✅ Sāk pilnīgi jaunu prepare-backup (bez return)
                                 shouldStartNewBackup = true;
                             } else {
-                                // ✅ Turpina ar recovery (zip-uploaded, manifest-uploaded, etc.)
+                                // ✅ Turpina ar recovery (zip-uploaded, manifest-uploading, manifest-uploaded, etc.)
                                 setPreparedJobId(jobStatus.jobId);
                                 setNftInfo({
                                     tokenId: jobStatus.tokenId,
@@ -512,9 +512,10 @@ function BackupPage() {
                                     return;
                                 }
 
-                                // ✅ Ja zip-uploaded / manifest-uploaded — var turpināt
+                                // ✅ Ja zip-uploaded / manifest-uploading / manifest-uploaded — var turpināt
                                 if (
                                     jobStatus.status === 'zip-uploaded' ||
+                                    jobStatus.status === 'manifest-uploading' ||
                                     jobStatus.status === 'manifest-uploaded'
                                 ) {
                                     setStatus(t('recovery-ready'));
