@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from './LanguageContext';
 
 const NFT_ABI = [
-    "function mintRepository(address recipient, string calldata repository, string calldata uri) external returns (uint256)",
+    "function mintRepository(address recipient, string calldata repository, uint256 deadline, bytes calldata signature) external returns (uint256)",
     "function repositoryTokens(bytes32 repoHash) external view returns (uint256)",
     "function ownerOf(uint256 tokenId) external view returns (address)",
     "function getBackupCount(uint256 tokenId) external view returns (uint256)",
@@ -216,20 +216,43 @@ function App() {
         }
         try {
             setIsLoading(true);
-            setStatus('Izveido NFT...');
+            setStatus(t('mint-preparing'));
             setStatusType('progress');
-            
+            setError('');
+
             const provider = new ethers.BrowserProvider(window.ethereum);
             const nftSigner = await provider.getSigner();
             const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, nftSigner);
             
             const fullRepoName = `${githubUser}/${repoName}`;
-            const nftImageURI = 'ar://placeholder';
-            
-            const tx = await nftWrite.mintRepository(userAddress, fullRepoName, nftImageURI);
+
+            // ✅ Iegūst EIP-712 mint authorization no servera
+            const authData = await apiJson('/api/mint-authorization', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    repository: fullRepoName,
+                    walletAddress: userAddress
+                })
+            });
+
+            if (!authData.success || !authData.signature) {
+                throw new Error(t('mint-not-authorized'));
+            }
+
+            setStatus(t('mint-confirming'));
+            setStatusType('progress');
+
+            // ✅ Izsauc mintRepository ar EIP-712 signature
+            const tx = await nftWrite.mintRepository(
+                userAddress,
+                fullRepoName,
+                BigInt(authData.deadline),
+                authData.signature
+            );
             await tx.wait();
             
-            setStatus('NFT izveidots!');
+            setStatus(t('mint-success'));
             setStatusType('success');
             setLastStatusData({ type: 'nft-minted' });
             await connectWallet();
@@ -237,12 +260,12 @@ function App() {
         } catch (e) {
             setIsLoading(false);
             if (e.code === 'ACTION_REJECTED') {
-                setError('Transakcija atcelta');
+                setError(t('transaction-cancelled'));
             } else {
-                setError(e.message);
+                setError(e.message || t('mint-authorization-failed'));
             }
         }
-    }, [config, githubUser, userAddress, connectWallet, subscriptionStatus, t]);
+    }, [config, githubUser, userAddress, connectWallet, subscriptionStatus, t, apiJson]);
 
     const createBackup = useCallback(async (repo) => {
         if (!window.ethereum || !userAddress) {
@@ -561,12 +584,18 @@ function App() {
                                     {t('nft-not-owned')}
                                 </div>
                             ) : subscriptionStatus?.isSubscribed ? (
-                                <button 
-                                    onClick={() => mintNFT(selectedRepo.name)}
-                                    className="sign-button"
-                                >
-                                    {t('mint-nft')}
-                                </button>
+                                isLoading ? (
+                                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                                        <div className="spinner"></div>
+                                    </div>
+                                ) : (
+                                    <button 
+                                        onClick={() => mintNFT(selectedRepo.name)}
+                                        className="sign-button"
+                                    >
+                                        {t('mint-nft')}
+                                    </button>
+                                )
                             ) : (
                                 <div className="error">
                                     <Icon name="kluda" />
