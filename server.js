@@ -46,6 +46,8 @@ const GITHUB_REDIRECT_URI = process.env.GITHUB_REDIRECT_URI || '';
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const TURBO_UPLOAD_URL = process.env.TURBO_UPLOAD_URL || '';
 const TURBO_PAYMENT_URL = process.env.TURBO_PAYMENT_URL || '';
+const MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY =
+    process.env.MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY || '';
 
 const MAX_REPO_FILES = Number(process.env.MAX_REPO_FILES || 5000);
 const MAX_REPO_BYTES = Number(process.env.MAX_REPO_BYTES || 524288000);
@@ -76,6 +78,7 @@ const LOCK_HEARTBEAT_MS = Number(process.env.LOCK_HEARTBEAT_MS || 60000);
 const DOWNLOAD_CONCURRENCY = 3;
 const MAX_GITHUB_REPO_PAGES = 10;
 const MAX_MANIFEST_BYTES = 10 * 1024 * 1024;
+const MINT_AUTHORIZATION_TTL_SECONDS = 900; // 15 min
 
 if (!CHAIN_ID) {
     console.error('❌ CHAIN_ID nav iestatīts!');
@@ -89,6 +92,11 @@ if (!RPC_URL) {
 
 if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
     console.error('❌ SESSION_SECRET nav iestatīts vai ir pārāk īss!');
+    process.exit(1);
+}
+
+if (!MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY) {
+    console.error('❌ MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY nav iestatīts!');
     process.exit(1);
 }
 
@@ -460,6 +468,11 @@ function getProvider() {
     return new ethers.JsonRpcProvider(RPC_URL, EXPECTED_CHAIN_ID);
 }
 
+// ✅ Mint authorization signer
+const mintAuthorizationSigner = new ethers.Wallet(
+    MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY
+);
+
 // ✅ Droša Arweave manifesta ielāde (servera pusē)
 function getValidatedManifestUrl(manifestId) {
     if (!validateArweaveId(manifestId)) {
@@ -539,7 +552,10 @@ const NFT_ABI = [
     'function ownerOf(uint256 tokenId) external view returns (address)',
     'function getBackupCount(uint256 tokenId) external view returns (uint256)',
     'function getManifestURI(uint256 tokenId) external view returns (string)',
-    'function getLastMerkleRoot(uint256 tokenId) external view returns (bytes32)'
+    'function getLastMerkleRoot(uint256 tokenId) external view returns (bytes32)',
+    'function mintNonces(address) external view returns (uint256)',
+    'function defaultURI() external view returns (string)',
+    'function mintSigner() external view returns (address)'
 ];
 
 const SUBSCRIPTION_ABI = [
@@ -734,6 +750,15 @@ const backupLimiter = rateLimit({
     keyGenerator: req => req.session.githubUser || req.ip
 });
 
+const mintAuthorizationLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Pārāk daudz mint operāciju — mēģini vēlāk.' },
+    keyGenerator: req => req.session.githubUser || req.ip
+});
+
 class GitHubRateLimiter {
     constructor() {
         this.lastRequestTime = 0;
@@ -849,7 +874,8 @@ async function getGitHubRepository(githubToken, owner, repo) {
         id: data.id,
         fullName,
         defaultBranch: data.default_branch,
-        private: Boolean(data.private)
+        private: Boolean(data.private),
+        permissions: data.permissions || null
     };
 }
 
@@ -1562,6 +1588,153 @@ app.get('/api/subscription/status', async (req, res) => {
 });
 
 // =============================================================================
+// Mint authorization (EIP-712)
+// =============================================================================
+
+app.post('/api/mint-authorization', mintAuthorizationLimiter, async (req, res) => {
+    try {
+        assertSameOrigin(req);
+        if (!requireGithubSession(req, res)) return;
+
+        const { repository, walletAddress } = req.body;
+        const githubUser = req.session.githubUser;
+        const githubToken = req.session.githubToken;
+        const normalizedWallet = safeWallet(walletAddress);
+
+        if (!normalizedWallet) {
+            return res.status(400).json({
+                success: false,
+                error: 'Nederīga maka adrese.'
+            });
+        }
+
+        if (
+            typeof repository !== 'string' ||
+            !/^[a-zA-Z0-9_.-]{1,100}\/[a-zA-Z0-9_.-]{1,100}$/.test(repository)
+        ) {
+            return res.status(400).json({
+                success: false,
+                error: 'Nederīgs repo nosaukums.'
+            });
+        }
+
+        const [owner, repo] = repository.split('/');
+
+        if (owner !== githubUser) {
+            return res.status(403).json({
+                success: false,
+                error: 'Repozitorijs nepieder šim GitHub lietotājam.'
+            });
+        }
+
+        // ✅ Pārbauda GitHub repo ownership
+        const repoData = await getGitHubRepository(
+            githubToken,
+            owner,
+            repo
+        );
+
+        if (
+            !repoData.permissions ||
+            (!repoData.permissions.admin && !repoData.permissions.push)
+        ) {
+            return res.status(403).json({
+                success: false,
+                error: 'Tev nav tiesību uz šo repozitoriju.'
+            });
+        }
+
+        // ✅ Iegūst nonce un defaultURI no kontrakta
+        const provider = getProvider();
+        const nftContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
+
+        let currentNonce;
+        let defaultURI;
+
+        try {
+            [currentNonce, defaultURI] = await Promise.all([
+                nftContract.mintNonces(normalizedWallet),
+                nftContract.defaultURI()
+            ]);
+        } catch (rpcError) {
+            console.error('RPC kļūda mint authorization:', rpcError);
+            return res.status(500).json({
+                success: false,
+                error: 'Neizdevās nolasīt kontrakta stāvokli.'
+            });
+        }
+
+        if (!defaultURI || defaultURI.length === 0) {
+            return res.status(500).json({
+                success: false,
+                error: 'defaultURI nav iestatīts kontraktā.'
+            });
+        }
+
+        const deadline = Math.floor(Date.now() / 1000) + MINT_AUTHORIZATION_TTL_SECONDS;
+
+        // ✅ EIP-712 domain
+        const domain = {
+            name: 'PermRepo',
+            version: '1',
+            chainId: EXPECTED_CHAIN_ID,
+            verifyingContract: NFT_ADDRESS
+        };
+
+        // ✅ EIP-712 types
+        const types = {
+            MintRepository: [
+                { name: 'recipient', type: 'address' },
+                { name: 'repository', type: 'string' },
+                { name: 'uri', type: 'string' },
+                { name: 'deadline', type: 'uint256' },
+                { name: 'nonce', type: 'uint256' }
+            ]
+        };
+
+        // ✅ EIP-712 value
+        const value = {
+            recipient: normalizedWallet,
+            repository: repository,
+            uri: defaultURI,
+            deadline: deadline,
+            nonce: currentNonce
+        };
+
+        // ✅ Paraksta ar backend wallet
+        let signature;
+        try {
+            signature = await mintAuthorizationSigner.signTypedData(
+                domain,
+                types,
+                value
+            );
+        } catch (signError) {
+            console.error('Mint signature kļūda:', signError);
+            return res.status(500).json({
+                success: false,
+                error: 'Neizdevās parakstīt mint autorizāciju.'
+            });
+        }
+
+        return res.json({
+            success: true,
+            signature,
+            deadline,
+            nonce: currentNonce.toString()
+        });
+    } catch (error) {
+        const message = errorMessage(error);
+        const status = /nepieder|nav tiesību/i.test(message) ? 403 : 500;
+
+        return res.status(status).json({
+            success: false,
+            error: message
+        });
+    }
+});
+
+// =============================================================================
 // Backup preparation (NDJSON)
 // =============================================================================
 
@@ -1856,8 +2029,8 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             unchangedFiles,
             status: 'prepared',
             zipTxId: null,
-            zipIv: null,                // ✅ #3 LABOJUMS
-            zipMerkleRoot: null,        // ✅ #3 LABOJUMS
+            zipIv: null,
+            zipMerkleRoot: null,
             manifestTxId: null,
             manifest: null,
             backupNumber: null,
@@ -2014,15 +2187,15 @@ app.get('/api/job-status', async (req, res) => {
             tokenId: job.tokenId,
             walletAddress: job.walletAddress,
             zipTxId: job.zipTxId || null,
-            zipIv: job.zipIv || null,                       // ✅ #3 LABOJUMS
-            zipMerkleRoot: job.zipMerkleRoot || null,       // ✅ #3 LABOJUMS
+            zipIv: job.zipIv || null,
+            zipMerkleRoot: job.zipMerkleRoot || null,
             manifestTxId: job.manifestTxId || null,
-            backupCount,                                    // ← on-chain count
-            backupNumber: job.backupNumber || null,         // ← konkrētā job numurs
+            backupCount,
+            backupNumber: job.backupNumber || null,
             manifestHash: job.manifestHash || null,
             merkleRoot: job.merkleRoot || null,
             manifestURI: job.manifestURI || null,
-            lastManifest: job.lastManifest || null,         // ✅ #2 LABOJUMS (jau bija)
+            lastManifest: job.lastManifest || null,
             lastMerkleRoot: job.lastMerkleRoot || null,
             deadline: job.deadline || null,
             backupTxHash: job.backupTxHash || null,
@@ -2100,7 +2273,6 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
         assertSameOrigin(req);
         if (!requireGithubSession(req, res)) return;
 
-        // ✅ #3 LABOJUMS: pieņem arī iv un merkleRoot
         const { jobId, zipTxId, iv, merkleRoot } = req.body;
 
         validateJobTxInput(jobId, zipTxId);
@@ -2167,7 +2339,6 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                 );
             }
 
-            // ✅ #3 LABOJUMS: saglabā arī zipIv un zipMerkleRoot
             await updateJob(jobId, {
                 zipTxId,
                 zipIv: normalizedIV,
@@ -2634,7 +2805,6 @@ app.post('/api/complete-backup', backupLimiter, async (req, res) => {
             let backupAddedEvent = null;
 
             for (const log of receipt.logs) {
-                // ✅ Ierobežo log.address
                 if (log.address.toLowerCase() !== NFT_ADDRESS.toLowerCase()) {
                     continue;
                 }
@@ -2674,9 +2844,6 @@ app.post('/api/complete-backup', backupLimiter, async (req, res) => {
             if (backupAddedEvent.args.manifestURI !== job.manifestURI) {
                 throw new Error('BackupAdded manifestURI nesakrīt.');
             }
-
-            // ❌ NOŅEMTS: on-chain state pārbaudes
-            // (getManifestURI, getLastMerkleRoot, getBackupCount)
 
             await updateJob(jobId, {
                 status: 'completed',
@@ -2819,8 +2986,8 @@ app.post('/api/retry-backup', backupLimiter, async (req, res) => {
                 error: null,
                 failedAt: null,
                 zipTxId: null,
-                zipIv: null,                // ✅ #3 LABOJUMS
-                zipMerkleRoot: null,        // ✅ #3 LABOJUMS
+                zipIv: null,
+                zipMerkleRoot: null,
                 manifestTxId: null,
                 manifest: null,
                 backupNumber: null,
@@ -2866,7 +3033,8 @@ app.get('/api/health', async (req, res) => {
         subscription: Boolean(SUBSCRIPTION_ADDRESS),
         github: Boolean(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET && GITHUB_REDIRECT_URI),
         turboUpload: Boolean(TURBO_UPLOAD_URL),
-        turboPayment: Boolean(TURBO_PAYMENT_URL)
+        turboPayment: Boolean(TURBO_PAYMENT_URL),
+        mintAuthorization: Boolean(MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY)
     });
 });
 
@@ -2898,6 +3066,7 @@ app.listen(PORT, () => {
     logInfo('Subscription', SUBSCRIPTION_ADDRESS || '❌ NAV');
     logInfo('Turbo Upload', TURBO_UPLOAD_URL || '❌ NAV');
     logInfo('Turbo Payment', TURBO_PAYMENT_URL || '❌ NAV');
+    logInfo('Mint authorization signer', mintAuthorizationSigner.address);
 
     console.log('='.repeat(60) + '\n');
 });
