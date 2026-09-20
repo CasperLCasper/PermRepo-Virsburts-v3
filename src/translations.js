@@ -75,7 +75,14 @@ export const translations = {
         'redis-completion-failed': 'Neizdevās apstiprināt backup pabeigšanu serverī',
         'retry-backup': 'Mēģināt vēlreiz',
         'retry-ready': 'Gatavs atkārtotai augšupielādei',
-        'backup-failed': 'Backups neizdevās'
+        'backup-failed': 'Backups neizdevās',
+        // ✅ Mint tulkojumi
+        'mint-preparing': 'Sagatavo NFT autorizāciju...',
+        'mint-confirming': 'Apstiprina NFT izveidi...',
+        'mint-success': 'NFT izveidots!',
+        'mint-authorization-failed': 'Neizdevās iegūt mint autorizāciju',
+        'mint-not-authorized': 'Tev nav tiesību mintēt šo repo',
+        'mint-signature-invalid': 'Nederīga mint signature'
     },
 
     en: {
@@ -154,7 +161,14 @@ export const translations = {
         'redis-completion-failed': 'Failed to confirm backup completion on server',
         'retry-backup': 'Retry backup',
         'retry-ready': 'Ready for retry',
-        'backup-failed': 'Backup failed'
+        'backup-failed': 'Backup failed',
+        // ✅ Mint translations
+        'mint-preparing': 'Preparing NFT authorization...',
+        'mint-confirming': 'Confirming NFT creation...',
+        'mint-success': 'NFT created!',
+        'mint-authorization-failed': 'Failed to get mint authorization',
+        'mint-not-authorized': 'You are not authorized to mint this repo',
+        'mint-signature-invalid': 'Invalid mint signature'
     },
 
     eo: {
@@ -233,6 +247,13 @@ export const translations = {
         'redis-completion-failed': 'Malsukcesis konfirmi sekurkopian finiĝon ĉe servilo',
         'retry-backup': 'Reprovi sekurkopion',
         'retry-ready': 'Preta por reprovo',
-        'backup-failed': 'Sekurkopio malsukcesis'
+        'backup-failed': 'Sekurkopio malsukcesis',
+        // ✅ Mint tradukoj
+        'mint-preparing': 'Preparante NFT-rauxon...',
+        'mint-confirming': 'Konfirmante NFT-kreadon...',
+        'mint-success': 'NFT kreita!',
+        'mint-authorization-failed': 'Malsukcesis akiri mint-rauxon',
+        'mint-not-authorized': 'Vi ne estas rauxita por minti ĉi tiun deponejon',
+        'mint-signature-invalid': 'Nevalida mint-subskribo'
     }
 };
