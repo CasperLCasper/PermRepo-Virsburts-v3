@@ -9,10 +9,10 @@ export const translations = {
         repository: 'Repozitorijs',
         'select-repo': 'Izvēlies repozitoriju...',
         'open-backup': 'Izveidot Backupu',
-        'mint-nft': 'Izveidot repozitorija deskriptoru',
-        'nft-linked': 'Repozitorija deskriptors ir piesaistīts šim repozitorijam',
-        'no-nft': 'Repozitorija deskriptors vēl nav izveidots',
-        'nft-not-owned': 'Repozitorija deskriptors nepieder šim makam',
+        'mint-nft': 'Izveidot Repozitorija Deskriptoru',
+        'nft-linked': 'Repozitorija Deskriptors ir piesaistīts šim repozitorijam',
+        'no-nft': 'Repozitorija Deskriptors vēl nav izveidots',
+        'nft-not-owned': 'Repozitorija Deskriptors nepieder šim makam',
         'subscription-active': 'Abonements: AKTĪVS',
         'subscription-expired': 'Abonements: BEIDZIES — ATJAUNOT',
         'subscription-required': 'Nepieciešams aktīvs abonements',
@@ -22,7 +22,7 @@ export const translations = {
         'network-changed': 'Tīkls tika nomainīts — lūdzu, izvēlieties Base tīklu',
         'backup-title': 'PermRepo Backups',
         'repo-label': 'Repozitorijs',
-        'nft-token': 'Repozitorija deskriptora ID',
+        'nft-token': 'Repozitorija Deskriptora ID',
         'backup-count': 'Backupu skaits',
         'last-manifest': 'Pēdējais manifests',
         'last-merkle': 'Pēdējā Merkle sakne',
@@ -76,13 +76,13 @@ export const translations = {
         'retry-backup': 'Mēģināt vēlreiz',
         'retry-ready': 'Gatavs atkārtotai augšupielādei',
         'backup-failed': 'Backups neizdevās',
-        // ✅ "Repository Descriptor" tulkojumi
-        'mint-preparing': 'Sagatavo repozitorija deskriptora autorizāciju...',
-        'mint-confirming': 'Apstiprina repozitorija deskriptora izveidi...',
-        'mint-success': 'Repozitorija deskriptors izveidots!',
-        'mint-authorization-failed': 'Neizdevās iegūt repozitorija deskriptora autorizāciju',
-        'mint-not-authorized': 'Tev nav tiesību izveidot repozitorija deskriptoru šim repo',
-        'mint-signature-invalid': 'Nederīga repozitorija deskriptora signature'
+        // ✅ "Repozitorija Deskriptors" tulkojumi
+        'mint-preparing': 'Sagatavo Repozitorija Deskriptora autorizāciju...',
+        'mint-confirming': 'Apstiprina Repozitorija Deskriptora izveidi...',
+        'mint-success': 'Repozitorija Deskriptors izveidots!',
+        'mint-authorization-failed': 'Neizdevās iegūt Repozitorija Deskriptora autorizāciju',
+        'mint-not-authorized': 'Tev nav tiesību izveidot Repozitorija Deskriptoru šim repo',
+        'mint-signature-invalid': 'Nederīga Repozitorija Deskriptora signature'
     },
 
     en: {
