@@ -9,10 +9,10 @@ export const translations = {
         repository: 'Repozitorijs',
         'select-repo': 'Izvēlies repozitoriju...',
         'open-backup': 'Izveidot Backupu',
-        'mint-nft': 'Izveidot "Backup Pielikumu"',
-        'nft-linked': '"Backup Pielikums" ir piesaistīts šim repozitorijam',
-        'no-nft': '"Backup Pielikums" vēl nav izveidots',
-        'nft-not-owned': '"Backup Pielikums" nepieder šim makam',
+        'mint-nft': 'Izveidot repozitorija deskriptoru',
+        'nft-linked': 'Repozitorija deskriptors ir piesaistīts šim repozitorijam',
+        'no-nft': 'Repozitorija deskriptors vēl nav izveidots',
+        'nft-not-owned': 'Repozitorija deskriptors nepieder šim makam',
         'subscription-active': 'Abonements: AKTĪVS',
         'subscription-expired': 'Abonements: BEIDZIES — ATJAUNOT',
         'subscription-required': 'Nepieciešams aktīvs abonements',
@@ -22,7 +22,7 @@ export const translations = {
         'network-changed': 'Tīkls tika nomainīts — lūdzu, izvēlieties Base tīklu',
         'backup-title': 'PermRepo Backups',
         'repo-label': 'Repozitorijs',
-        'nft-token': '"Backup Pielikuma" ID',
+        'nft-token': 'Repozitorija deskriptora ID',
         'backup-count': 'Backupu skaits',
         'last-manifest': 'Pēdējais manifests',
         'last-merkle': 'Pēdējā Merkle sakne',
@@ -76,13 +76,13 @@ export const translations = {
         'retry-backup': 'Mēģināt vēlreiz',
         'retry-ready': 'Gatavs atkārtotai augšupielādei',
         'backup-failed': 'Backups neizdevās',
-        // ✅ "Backup Pielikums" tulkojumi
-        'mint-preparing': 'Sagatavo "Backup Pielikuma" autorizāciju...',
-        'mint-confirming': 'Apstiprina "Backup Pielikuma" izveidi...',
-        'mint-success': '"Backup Pielikums" izveidots!',
-        'mint-authorization-failed': 'Neizdevās iegūt "Backup Pielikuma" autorizāciju',
-        'mint-not-authorized': 'Tev nav tiesību izveidot "Backup Pielikumu" šim repo',
-        'mint-signature-invalid': 'Nederīga "Backup Pielikuma" signature'
+        // ✅ "Repository Descriptor" tulkojumi
+        'mint-preparing': 'Sagatavo repozitorija deskriptora autorizāciju...',
+        'mint-confirming': 'Apstiprina repozitorija deskriptora izveidi...',
+        'mint-success': 'Repozitorija deskriptors izveidots!',
+        'mint-authorization-failed': 'Neizdevās iegūt repozitorija deskriptora autorizāciju',
+        'mint-not-authorized': 'Tev nav tiesību izveidot repozitorija deskriptoru šim repo',
+        'mint-signature-invalid': 'Nederīga repozitorija deskriptora signature'
     },
 
     en: {
@@ -95,10 +95,10 @@ export const translations = {
         repository: 'Repository',
         'select-repo': 'Select repository...',
         'open-backup': 'Create Backup',
-        'mint-nft': 'Create "Backup Attachment"',
-        'nft-linked': '"Backup Attachment" is linked to this repository',
-        'no-nft': '"Backup Attachment" not created yet',
-        'nft-not-owned': '"Backup Attachment" is not owned by this wallet',
+        'mint-nft': 'Create Repository Descriptor',
+        'nft-linked': 'Repository Descriptor is linked to this repository',
+        'no-nft': 'Repository Descriptor not created yet',
+        'nft-not-owned': 'Repository Descriptor is not owned by this wallet',
         'subscription-active': 'Subscription: ACTIVE',
         'subscription-expired': 'Subscription: EXPIRED — RENEW',
         'subscription-required': 'Active subscription required',
@@ -108,7 +108,7 @@ export const translations = {
         'network-changed': 'Network was changed — please select Base network',
         'backup-title': 'PermRepo Backups',
         'repo-label': 'Repository',
-        'nft-token': '"Backup Attachment" ID',
+        'nft-token': 'Repository Descriptor ID',
         'backup-count': 'Backup count',
         'last-manifest': 'Last manifest',
         'last-merkle': 'Last Merkle root',
@@ -162,13 +162,13 @@ export const translations = {
         'retry-backup': 'Retry backup',
         'retry-ready': 'Ready for retry',
         'backup-failed': 'Backup failed',
-        // ✅ "Backup Attachment" translations
-        'mint-preparing': 'Preparing "Backup Attachment" authorization...',
-        'mint-confirming': 'Confirming "Backup Attachment" creation...',
-        'mint-success': '"Backup Attachment" created!',
-        'mint-authorization-failed': 'Failed to get "Backup Attachment" authorization',
-        'mint-not-authorized': 'You are not authorized to create "Backup Attachment" for this repo',
-        'mint-signature-invalid': 'Invalid "Backup Attachment" signature'
+        // ✅ "Repository Descriptor" translations
+        'mint-preparing': 'Preparing Repository Descriptor authorization...',
+        'mint-confirming': 'Confirming Repository Descriptor creation...',
+        'mint-success': 'Repository Descriptor created!',
+        'mint-authorization-failed': 'Failed to get Repository Descriptor authorization',
+        'mint-not-authorized': 'You are not authorized to create Repository Descriptor for this repo',
+        'mint-signature-invalid': 'Invalid Repository Descriptor signature'
     },
 
     eo: {
@@ -181,10 +181,10 @@ export const translations = {
         repository: 'Deponejo',
         'select-repo': 'Elektu deponejon...',
         'open-backup': 'Krei Sekurkopion',
-        'mint-nft': 'Krei "Savkopio Aldonon"',
-        'nft-linked': '"Savkopio Aldono" estas ligita al ĉi tiu deponejo',
-        'no-nft': '"Savkopio Aldono" ankoraŭ ne kreita',
-        'nft-not-owned': '"Savkopio Aldono" ne apartenas al ĉi tiu monujo',
+        'mint-nft': 'Krei Deponejan Deskriptoron',
+        'nft-linked': 'Deponeja Deskriptoro estas ligita al ĉi tiu deponejo',
+        'no-nft': 'Deponeja Deskriptoro ankoraŭ ne kreita',
+        'nft-not-owned': 'Deponeja Deskriptoro ne apartenas al ĉi tiu monujo',
         'subscription-active': 'Abono: AKTIVA',
         'subscription-expired': 'Abono: FINIĜIS — RENOVIGI',
         'subscription-required': 'Aktiva abono bezonata',
@@ -194,7 +194,7 @@ export const translations = {
         'network-changed': 'Reto estis ŝanĝita — bonvolu elekti Base-reton',
         'backup-title': 'PermRepo Sekurkopioj',
         'repo-label': 'Deponejo',
-        'nft-token': '"Savkopio Aldono" ID',
+        'nft-token': 'Deponeja Deskriptoro ID',
         'backup-count': 'Nombro de sekurkopioj',
         'last-manifest': 'Lasta manifesto',
         'last-merkle': 'Lasta Merkle-radiko',
@@ -248,12 +248,12 @@ export const translations = {
         'retry-backup': 'Reprovi sekurkopion',
         'retry-ready': 'Preta por reprovo',
         'backup-failed': 'Sekurkopio malsukcesis',
-        // ✅ "Savkopio Aldono" tradukoj
-        'mint-preparing': 'Preparante "Savkopio Aldonon" rauxon...',
-        'mint-confirming': 'Konfirmante "Savkopio Aldono" kreadon...',
-        'mint-success': '"Savkopio Aldono" kreita!',
-        'mint-authorization-failed': 'Malsukcesis akiri "Savkopio Aldonon" rauxon',
-        'mint-not-authorized': 'Vi ne estas rauxita por krei "Savkopio Aldonon" por ĉi tiu deponejo',
-        'mint-signature-invalid': 'Nevalida "Savkopio Aldono" subskribo'
+        // ✅ "Deponeja Deskriptoro" tradukoj
+        'mint-preparing': 'Preparante Deponeja Deskriptoro rauxon...',
+        'mint-confirming': 'Konfirmante Deponeja Deskriptoro kreadon...',
+        'mint-success': 'Deponeja Deskriptoro kreita!',
+        'mint-authorization-failed': 'Malsukcesis akiri Deponeja Deskriptoro rauxon',
+        'mint-not-authorized': 'Vi ne estas rauxita por krei Deponeja Deskriptoron por ĉi tiu deponejo',
+        'mint-signature-invalid': 'Nevalida Deponeja Deskriptoro subskribo'
     }
 };
