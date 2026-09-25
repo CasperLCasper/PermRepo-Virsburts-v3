@@ -12,9 +12,9 @@
 
 ---
 
-# 🇱🇻 Latviešu
+🇱🇻 Latviešu
 
-## Kas ir PermRepo?
+Kas ir PermRepo?
 
 **PermRepo** ir platforma, kas veido **permanentus GitHub repozitoriju backupus** uz **Arweave** un reģistrē tos **Base** blokķēdē.
 
@@ -24,7 +24,7 @@ Katrs repozitorijs iegūst **On-chain Deskriptoru** — unikālu ierakstu Base b
 - Nodrošina permanentus, pārbaudāmus backupus
 - Ir **nepārdodams** (var tikai migrēt, nevis pārdot)
 
-## Kāpēc PermRepo?
+Kāpēc PermRepo?
 
 GitHub ir lielisks, bet tas **nav permanents**:
 
@@ -41,9 +41,9 @@ GitHub ir lielisks, bet tas **nav permanents**:
 - ✅ Decentralizētu glabāšanu
 - ✅ Tu kontrolē savus datus
 
-## Kā tas strādā?
+Kā tas strādā?
 
-### Lietotāja plūsma
+Lietotāja plūsma
 
 1. Savieno GitHub (OAuth)
 2. Savieno maku (MetaMask uz Base)
@@ -53,7 +53,7 @@ GitHub ir lielisks, bet tas **nav permanents**:
 6. Izveido backupu (ZIP + šifrē + augšupielādē uz Arweave)
 7. Pārbaudi (Merkle sakne uz Base)
 
-### Backup plūsma
+Backup plūsma
 
 GitHub Repo
 ↓
@@ -72,9 +72,9 @@ Reģistrē uz Base (addBackup)
 ✅ Permanentais Backups
 
 
-## Tehnoloģijas
+Tehnoloģijas
 
-### Frontend
+Frontend
 
 - React 18
 - Vite
@@ -83,7 +83,7 @@ Reģistrē uz Base (addBackup)
 - JSZip
 - Web Crypto API (AES-GCM)
 
-### Backend
+Backend
 
 - Node.js 20+
 - Express
@@ -91,21 +91,21 @@ Reģistrē uz Base (addBackup)
 - ethers.js v6
 - yauzl
 
-### Blokķēde
+Blokķēde
 
 - Base (L2)
 - Solidity 0.8.35
 - OpenZeppelin 5.x
 - EIP-712
 
-### Glabāšana
+Glabāšana
 
 - Arweave (permanent)
 - Turbo (augšupielādes serviss)
 
-## Kā sākt?
+Kā sākt?
 
-### Priekšnosacījumi
+Priekšnosacījumi
 
 - Node.js 20+
 - Git
@@ -113,26 +113,26 @@ Reģistrē uz Base (addBackup)
 - GitHub konts
 - Upstash konts
 
-### Uzstādīšana
+Uzstādīšana
 
 ```bash
-# Klonē repozitoriju
+Klonē repozitoriju
 git clone https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git
 cd PermRepo-Virsburts-v3
 
-# Instalē dependencies
+Instalē dependencies
 npm install
 
-# Kopē vides paraugu
+Kopē vides paraugu
 cp .env.example .env
 
-# Rediģē .env ar savām vērtībām
+Rediģē .env ar savām vērtībām
 nano .env
 
-# Būvē frontend
+Būvē frontend
 npm run build
 
-# Palaid serveri
+Palaid serveri
 node server.js
 
 Vides mainīgie
