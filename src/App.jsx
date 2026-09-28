@@ -567,40 +567,44 @@ function App() {
                                 {selectedRepo.hasNFT ? (selectedRepo.nftOwnedByWallet ? t('nft-linked') : t('nft-not-owned')) : t('no-nft')}
                             </div>
                             
+                            {/* ✅ LABOTĀ LOĢIKA */}
                             {isSigningForBackup ? (
                                 <div style={{ textAlign: 'center', padding: '20px' }}>
                                     <div className="spinner"></div>
                                 </div>
-                            ) : selectedRepo.hasNFT && selectedRepo.nftOwnedByWallet && subscriptionStatus?.isSubscribed ? (
+                            ) : !subscriptionStatus?.isSubscribed ? (
+                                // ✅ Abonements nav aktīvs → rāda abonementa kļūdu
+                                <div className="error">
+                                    <Icon name="kluda" />
+                                    {t('subscription-required')}
+                                </div>
+                            ) : selectedRepo.hasNFT && selectedRepo.nftOwnedByWallet ? (
+                                // ✅ NFT ir + pieder + abonements aktīvs → poga "Backup"
                                 <button 
                                     onClick={() => createBackup(selectedRepo)}
                                     className="sign-button"
                                 >
                                     {t('open-backup')}
                                 </button>
-                            ) : selectedRepo.hasNFT ? (
+                            ) : selectedRepo.hasNFT && !selectedRepo.nftOwnedByWallet ? (
+                                // ✅ NFT ir, bet nepieder → kļūda
                                 <div className="error">
                                     <Icon name="kluda" />
                                     {t('nft-not-owned')}
                                 </div>
-                            ) : subscriptionStatus?.isSubscribed ? (
-                                isLoading ? (
-                                    <div style={{ textAlign: 'center', padding: '20px' }}>
-                                        <div className="spinner"></div>
-                                    </div>
-                                ) : (
-                                    <button 
-                                        onClick={() => mintNFT(selectedRepo.name)}
-                                        className="sign-button"
-                                    >
-                                        {t('mint-nft')}
-                                    </button>
-                                )
-                            ) : (
-                                <div className="error">
-                                    <Icon name="kluda" />
-                                    {t('subscription-required')}
+                            ) : isLoading ? (
+                                // ✅ Ielāde
+                                <div style={{ textAlign: 'center', padding: '20px' }}>
+                                    <div className="spinner"></div>
                                 </div>
+                            ) : (
+                                // ✅ NFT nav + abonements aktīvs → poga "Izveidot Descriptor"
+                                <button 
+                                    onClick={() => mintNFT(selectedRepo.name)}
+                                    className="sign-button"
+                                >
+                                    {t('mint-nft')}
+                                </button>
                             )}
                         </div>
                     )}
