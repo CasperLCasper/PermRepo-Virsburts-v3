@@ -3,31 +3,13 @@ import { useLanguage } from './LanguageContext';
 import { useNavigate } from 'react-router-dom';
 
 function GuidePage() {
-    const { currentLanguage, switchLanguage } = useLanguage();
+    const { currentLanguage, t, switchLanguage } = useLanguage();
     const navigate = useNavigate();
 
     // ✅ PDF pēc valodas
     const pdfUrl = currentLanguage === 'en'
         ? '/docs/User Guide (EN).pdf'
         : '/docs/Lietotāja rokasgrāmata (LV).pdf';
-
-    const title = currentLanguage === 'lv'
-        ? 'Lietotāja rokasgrāmata'
-        : currentLanguage === 'en'
-            ? 'User Guide'
-            : 'Uzanta Gvidilo';
-
-    const backText = currentLanguage === 'lv'
-        ? 'Atpakaļ'
-        : currentLanguage === 'en'
-            ? 'Back'
-            : 'Reen';
-
-    const readText = currentLanguage === 'lv'
-        ? 'Lasīt rokasgrāmatu'
-        : currentLanguage === 'en'
-            ? 'Read User Guide'
-            : 'Legi Uzantan Gvidilon';
 
     return (
         <div className="container" style={{ maxWidth: '800px' }}>
@@ -53,7 +35,7 @@ function GuidePage() {
             </div>
 
             <h1 style={{ marginBottom: '20px', textAlign: 'center' }}>
-                📖 {title}
+                📖 {t('guide-title')}
             </h1>
 
             <button
@@ -61,7 +43,7 @@ function GuidePage() {
                 className="sign-button"
                 style={{ marginBottom: '20px' }}
             >
-                ← {backText}
+                ← {t('back-home')}
             </button>
 
             {/* ✅ Vienīgā poga — "Lasīt rokasgrāmatu" */}
@@ -79,7 +61,7 @@ function GuidePage() {
                     background: 'linear-gradient(135deg, #1f6feb 0%, #388bfd 100%)'
                 }}
             >
-                📖 {readText}
+                📖 {t('read-guide')}
             </a>
         </div>
     );
