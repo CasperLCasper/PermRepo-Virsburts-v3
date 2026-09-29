@@ -68,7 +68,6 @@ export const translations = {
 
         // ✅ Rokasgrāmata
         'guide': 'Lietotāja rokasgrāmata',
-        'guide-title': 'Lietotāja rokasgrāmata',
         'read-guide': 'Lasīt rokasgrāmatu',
 
         // Recovery tulkojumi
@@ -161,7 +160,6 @@ export const translations = {
 
         // ✅ User Guide
         'guide': 'User Guide',
-        'guide-title': 'User Guide',
         'read-guide': 'Read User Guide',
 
         // Recovery translations
@@ -254,7 +252,6 @@ export const translations = {
 
         // ✅ Uzanta Gvidilo
         'guide': 'Uzanta Gvidilo',
-        'guide-title': 'Uzanta Gvidilo',
         'read-guide': 'Legi Uzantan Gvidilon',
 
         // Recovery translations
