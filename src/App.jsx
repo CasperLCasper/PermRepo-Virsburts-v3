@@ -624,6 +624,18 @@ function App() {
                     {error}
                 </div>
             )}
+            
+            {/* ✅ Poga uz rokasgrāmatu */}
+            <button
+                onClick={() => navigate('/guide')}
+                className="sign-button"
+                style={{
+                    marginTop: '20px',
+                    background: 'linear-gradient(135deg, #1f6feb 0%, #388bfd 100%)'
+                }}
+            >
+                📖 {t('guide')}
+            </button>
         </div>
     );
 }
