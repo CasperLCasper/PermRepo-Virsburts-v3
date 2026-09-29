@@ -23,14 +23,14 @@ function GuidePage() {
             ? 'Back'
             : 'Reen';
 
-    const openPdfText = currentLanguage === 'lv'
-        ? 'Atvērt PDF'
+    const readText = currentLanguage === 'lv'
+        ? 'Lasīt rokasgrāmatu'
         : currentLanguage === 'en'
-            ? 'Open PDF'
-            : 'Malfermi PDF';
+            ? 'Read User Guide'
+            : 'Legi Uzantan Gvidilon';
 
     return (
-        <div className="container" style={{ maxWidth: '1000px' }}>
+        <div className="container" style={{ maxWidth: '800px' }}>
             <div className="language-selector">
                 <button
                     className={`lang-btn ${currentLanguage === 'lv' ? 'active' : ''}`}
@@ -64,20 +64,7 @@ function GuidePage() {
                 ← {backText}
             </button>
 
-            {/* ✅ PDF iegults */}
-            <iframe
-                src={pdfUrl}
-                style={{
-                    width: '100%',
-                    height: '80vh',
-                    border: '1px solid #30363d',
-                    borderRadius: '8px',
-                    background: '#0d1117'
-                }}
-                title={title}
-            />
-
-            {/* ✅ PDF atvēršanas poga */}
+            {/* ✅ Vienīgā poga — "Lasīt rokasgrāmatu" */}
             <a
                 href={pdfUrl}
                 target="_blank"
@@ -87,11 +74,12 @@ function GuidePage() {
                     display: 'block',
                     textAlign: 'center',
                     textDecoration: 'none',
-                    marginTop: '12px',
+                    padding: '20px',
+                    fontSize: '18px',
                     background: 'linear-gradient(135deg, #1f6feb 0%, #388bfd 100%)'
                 }}
             >
-                📥 {openPdfText}
+                📖 {readText}
             </a>
         </div>
     );
