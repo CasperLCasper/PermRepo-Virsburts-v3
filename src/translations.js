@@ -66,6 +66,9 @@ export const translations = {
         'invalid-upload-id': 'Nederīgs augšupielādes ID',
         'unknown-error': 'Nezināma kļūda',
 
+        // ✅ Rokasgrāmata
+        'guide': 'Lietotāja rokasgrāmata',
+
         // Recovery tulkojumi
         'recovery-required': 'Blockchain transakcija ir iesniegta — nepieciešams recovery',
         'recovery-ready': 'Gatavs turpināt no saglabātā stāvokļa',
@@ -154,6 +157,9 @@ export const translations = {
         'invalid-upload-id': 'Invalid upload ID',
         'unknown-error': 'Unknown error',
 
+        // ✅ User Guide
+        'guide': 'User Guide',
+
         // Recovery translations
         'recovery-required': 'Blockchain transaction submitted — recovery required',
         'recovery-ready': 'Ready to continue from saved state',
@@ -241,6 +247,9 @@ export const translations = {
         'invalid-file-data': 'Nevalidaj dosieraj datumoj',
         'invalid-upload-id': 'Nevalida alŝuta ID',
         'unknown-error': 'Nekonata eraro',
+
+        // ✅ Uzanta Gvidilo
+        'guide': 'Uzanta Gvidilo',
 
         // Recovery translations
         'recovery-required': 'Blockchain-transakcio sendita — rekupero bezonata',
