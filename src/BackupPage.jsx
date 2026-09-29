@@ -1004,6 +1004,9 @@ function BackupPage() {
                 manifest = {
                     manifest: 'arweave/paths',
                     version: '0.2.0',
+                    metadata: {                                  // ✅ PIEVIENOTS!
+                        repo: `${githubUser}/${repoName}`
+                    },
                     encryption: { ivs: encryptionIVs },
                     archive: {
                         id: zipTxId,
