@@ -119,7 +119,6 @@ function App() {
             
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
             
-            // ✅ LABOTS: Number.parseInt vietā parseInt
             if (Number.parseInt(currentChainId, 16) !== Number(config.chainId)) {
                 try {
                     await window.ethereum.request({ 
@@ -226,7 +225,6 @@ function App() {
             
             const fullRepoName = `${githubUser}/${repoName}`;
 
-            // ✅ Iegūst EIP-712 mint authorization no servera
             const authData = await apiJson('/api/mint-authorization', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -243,7 +241,6 @@ function App() {
             setStatus(t('mint-confirming'));
             setStatusType('progress');
 
-            // ✅ Izsauc mintRepository ar EIP-712 signature
             const tx = await nftWrite.mintRepository(
                 userAddress,
                 fullRepoName,
@@ -321,7 +318,6 @@ function App() {
         }
     }, [currentLanguage, lastStatusData, walletConnected, t]);
 
-    // ✅ UZLABOTS: Automātiska tīkla un maka maiņas apstrāde
     useEffect(() => {
         if (!window.ethereum || !config) return undefined;
 
@@ -331,7 +327,6 @@ function App() {
 
         const handleAccountsChanged = (accounts) => {
             if (accounts.length === 0) {
-                // Lietotājs atvienoja maku
                 setWalletConnected(false);
                 setUserAddress(null);
                 setSigner(null);
@@ -339,7 +334,6 @@ function App() {
                 setSelectedRepoName(null);
                 setError('');
             } else {
-                // ✅ Maks mainījās — automātiski atjauno
                 const newAddress = ethers.getAddress(accounts[0]);
                 if (userAddress && newAddress.toLowerCase() !== userAddress.toLowerCase()) {
                     setUserAddress(newAddress);
@@ -347,7 +341,6 @@ function App() {
                     setWalletConnected(false);
                     setReposData([]);
                     setSelectedRepoName(null);
-                    // Automātiski pārsavieno
                     setTimeout(() => {
                         window.location.reload();
                     }, 500);
@@ -356,13 +349,11 @@ function App() {
         };
 
         const handleChainChanged = async (chainIdHex) => {
-            // ✅ Ja tīkls ir pareizs — nekas nav jādara
             if (chainIdHex.toLowerCase() === expectedChainIdHex.toLowerCase()) {
                 setError('');
                 return;
             }
 
-            // ✅ Mēģina automātiski pārslēgt atpakaļ
             try {
                 await window.ethereum.request({
                     method: 'wallet_switchEthereumChain',
@@ -371,13 +362,11 @@ function App() {
                 setError('');
             } catch (switchError) {
                 if (switchError.code === 4001) {
-                    // Lietotājs atcēla tīkla maiņu
                     setError(t('network-changed'));
                     setWalletConnected(false);
                     setReposData([]);
                     setSelectedRepoName(null);
                 } else if (switchError.code === 4902) {
-                    // Tīkls nav pievienots — pievieno automātiski
                     try {
                         await window.ethereum.request({
                             method: 'wallet_addEthereumChain',
@@ -567,19 +556,16 @@ function App() {
                                 {selectedRepo.hasNFT ? (selectedRepo.nftOwnedByWallet ? t('nft-linked') : t('nft-not-owned')) : t('no-nft')}
                             </div>
                             
-                            {/* ✅ LABOTĀ LOĢIKA */}
                             {isSigningForBackup ? (
                                 <div style={{ textAlign: 'center', padding: '20px' }}>
                                     <div className="spinner"></div>
                                 </div>
                             ) : !subscriptionStatus?.isSubscribed ? (
-                                // ✅ Abonements nav aktīvs → rāda abonementa kļūdu
                                 <div className="error">
                                     <Icon name="kluda" />
                                     {t('subscription-required')}
                                 </div>
                             ) : selectedRepo.hasNFT && selectedRepo.nftOwnedByWallet ? (
-                                // ✅ NFT ir + pieder + abonements aktīvs → poga "Backup"
                                 <button 
                                     onClick={() => createBackup(selectedRepo)}
                                     className="sign-button"
@@ -587,18 +573,15 @@ function App() {
                                     {t('open-backup')}
                                 </button>
                             ) : selectedRepo.hasNFT && !selectedRepo.nftOwnedByWallet ? (
-                                // ✅ NFT ir, bet nepieder → kļūda
                                 <div className="error">
                                     <Icon name="kluda" />
                                     {t('nft-not-owned')}
                                 </div>
                             ) : isLoading ? (
-                                // ✅ Ielāde
                                 <div style={{ textAlign: 'center', padding: '20px' }}>
                                     <div className="spinner"></div>
                                 </div>
                             ) : (
-                                // ✅ NFT nav + abonements aktīvs → poga "Izveidot Descriptor"
                                 <button 
                                     onClick={() => mintNFT(selectedRepo.name)}
                                     className="sign-button"
@@ -625,17 +608,22 @@ function App() {
                 </div>
             )}
             
-            {/* ✅ Poga uz rokasgrāmatu */}
-            <button
-                onClick={() => navigate('/guide')}
+            {/* ✅ Viena poga — atver PDF uzreiz */}
+            <a
+                href={currentLanguage === 'en' ? '/docs/User Guide (EN).pdf' : '/docs/Lietotāja rokasgrāmata (LV).pdf'}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="sign-button"
                 style={{
                     marginTop: '20px',
-                    background: 'linear-gradient(135deg, #1f6feb 0%, #388bfd 100%)'
+                    background: 'linear-gradient(135deg, #1f6feb 0%, #388bfd 100%)',
+                    display: 'block',
+                    textAlign: 'center',
+                    textDecoration: 'none'
                 }}
             >
-                📖 {t('guide')}
-            </button>
+                📖 {t('read-guide')}
+            </a>
         </div>
     );
 }
