@@ -606,16 +606,6 @@ function App() {
                     {error}
                 </div>
             )}
-            
-            {/* ✅ Viena poga — atver PDF uzreiz (ar CSS efektu) */}
-            <a
-                href={currentLanguage === 'en' ? '/docs/User Guide (EN).pdf' : '/docs/Lietotāja rokasgrāmata (LV).pdf'}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="guide-button"
-            >
-                📖 {t('read-guide')}
-            </a>
         </div>
     );
 }
