@@ -607,12 +607,26 @@ function App() {
                 </div>
             )}
             
-            {/* ✅ Viena poga — atver PDF uzreiz (caurspīdīgs balts uz tumša fona) */}
+            {/* ✅ Viena poga — atver PDF uzreiz (baltā) */}
             <a
                 href={currentLanguage === 'en' ? '/docs/User Guide (EN).pdf' : '/docs/Lietotāja rokasgrāmata (LV).pdf'}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="guide-button"
+                style={{
+                    marginTop: '20px',
+                    display: 'block',
+                    textAlign: 'center',
+                    textDecoration: 'none',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    fontWeight: '600',
+                    fontSize: '16px',
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    color: '#ffffff',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease'
+                }}
             >
                 📖 {t('read-guide')}
             </a>
