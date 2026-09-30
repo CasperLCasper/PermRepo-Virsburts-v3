@@ -24,7 +24,6 @@ const USDC_ABI = [
     "function approve(address spender, uint256 amount) external returns (bool)"
 ];
 
-// ✅ React komponente ikonai — DROŠI!
 function Icon({ name }) {
     return <img src={`/icons/${name}.svg`} className="icon-inline" alt="" aria-hidden="true" />;
 }
@@ -608,18 +607,25 @@ function App() {
                 </div>
             )}
             
-            {/* ✅ Viena poga — atver PDF uzreiz */}
+            {/* ✅ Viena poga — atver PDF uzreiz (baltā) */}
             <a
                 href={currentLanguage === 'en' ? '/docs/User Guide (EN).pdf' : '/docs/Lietotāja rokasgrāmata (LV).pdf'}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="sign-button"
                 style={{
                     marginTop: '20px',
-                    background: 'linear-gradient(135deg, #1f6feb 0%, #388bfd 100%)',
                     display: 'block',
                     textAlign: 'center',
-                    textDecoration: 'none'
+                    textDecoration: 'none',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    fontWeight: '600',
+                    fontSize: '16px',
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    color: '#ffffff',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease'
                 }}
             >
                 📖 {t('read-guide')}
