@@ -22,7 +22,7 @@ export const translations = {
         'network-changed': 'Tīkls tika nomainīts — lūdzu, izvēlieties Base tīklu',
         'backup-title': 'PermRepo Backups',
         'repo-label': 'Repozitorijs',
-        'nft-token': 'On-chain Deskriptora ID',
+        'nft-token': 'ID de On-chain Deskriptoro',
         'backup-count': 'Backupu skaits',
         'last-manifest': 'Pēdējais manifests',
         'last-merkle': 'Pēdējā Merkle sakne',
