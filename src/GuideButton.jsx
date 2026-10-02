@@ -4,9 +4,12 @@ import { useLanguage } from './LanguageContext';
 function GuideButton() {
     const { currentLanguage, t } = useLanguage();
 
+    // ✅ PDF pēc valodas
     const pdfUrl = currentLanguage === 'en'
         ? '/docs/User Guide (EN).pdf'
-        : '/docs/Lietotāja rokasgrāmata (LV).pdf';
+        : currentLanguage === 'eo'
+            ? '/docs/Uzula Gvidilo (EO).pdf'
+            : '/docs/Lietotāja rokasgrāmata (LV).pdf';
 
     return (
         <div className="guide-container">
