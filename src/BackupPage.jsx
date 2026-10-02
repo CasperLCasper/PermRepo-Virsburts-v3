@@ -722,7 +722,7 @@ function BackupPage() {
         });
 
         if (!config) {
-            setError('Konfigurācija vēl nav ielādēta!');
+            setError(t('config-not-loaded'));
             return;
         }
         
@@ -1004,6 +1004,9 @@ function BackupPage() {
                 manifest = {
                     manifest: 'arweave/paths',
                     version: '0.2.0',
+                    metadata: {
+                        repo: `${githubUser}/${repoName}`
+                    },
                     encryption: { ivs: encryptionIVs },
                     archive: {
                         id: zipTxId,
