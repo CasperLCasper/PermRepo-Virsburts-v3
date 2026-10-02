@@ -68,7 +68,19 @@ export const translations = {
 
         // ✅ Rokasgrāmata
         'guide': 'Lietotāja rokasgrāmata',
+        'guide-title': 'Lietotāja rokasgrāmata',
         'read-guide': 'Lasīt rokasgrāmatu',
+
+        // ✅ Abonements
+        'approving-usdc': 'Apstiprina USDC atļauju...',
+        'purchasing-subscription': 'Iegādājas abonementu...',
+        'subscription-purchased': 'Abonements iegādāts!',
+
+        // ✅ Kļūdas
+        'install-wallet': 'Lūdzu instalē maku!',
+        'no-repos-found': 'Nav atrasts neviens repozitorijs',
+        'config-load-failed': 'Neizdevās iegūt konfigurāciju',
+        'config-not-loaded': 'Konfigurācija vēl nav ielādēta!',
 
         // Recovery tulkojumi
         'recovery-required': 'Blockchain transakcija ir iesniegta — nepieciešams recovery',
@@ -160,7 +172,19 @@ export const translations = {
 
         // ✅ User Guide
         'guide': 'User Guide',
+        'guide-title': 'User Guide',
         'read-guide': 'Read User Guide',
+
+        // ✅ Subscription
+        'approving-usdc': 'Approving USDC allowance...',
+        'purchasing-subscription': 'Purchasing subscription...',
+        'subscription-purchased': 'Subscription purchased!',
+
+        // ✅ Errors
+        'install-wallet': 'Please install a wallet!',
+        'no-repos-found': 'No repositories found',
+        'config-load-failed': 'Failed to load configuration',
+        'config-not-loaded': 'Configuration not loaded yet!',
 
         // Recovery translations
         'recovery-required': 'Blockchain transaction submitted — recovery required',
@@ -198,7 +222,7 @@ export const translations = {
         'no-nft': 'On-chain Deskriptoro ankoraŭ ne estas kreita',
         'nft-not-owned': 'On-chain Deskriptoro ne apartenas al ĉi tiu monujo',
         'subscription-active': 'Abono: AKTIVA',
-        'subscription-expired': 'Abono: FINIĜIS — RENOVIGI',
+        'subscription-expired': 'Abono: EKSPIRIS – RENOVIGI',
         'subscription-required': 'Aktiva abono estas bezonata',
         'days': 'tagoj',
         'wallet-connected': 'Monujo konektita',
@@ -214,9 +238,9 @@ export const translations = {
         'preparing': 'Preparante sekurkopion...',
         'backup-queued': 'Sekurkopio estas en vico. Servilaj rimedoj estas nun okupitaj.',
         'backup-queue-position': 'loko en la vico (komenca takso)',
-        'queued-position': 'Vico: pozicio',
+        'queued-position': 'Pozicio en vico',
         'processing': 'Prilaborante...',
-        'no-changes': 'Neniu ŝanĝo — ĉiuj dosieroj jam estas sekurkopiitaj!',
+        'no-changes': 'Neniu ŝanĝoj – ĉiuj dosieroj jam estas sekurkopiitaj!',
         'generate-key': 'Generante ĉefŝlosilon...',
         'enter-key': 'Enigu vian Ĉefŝlosilon:',
         'uploading': 'Alŝutante...',
@@ -252,13 +276,25 @@ export const translations = {
 
         // ✅ Uzanta Gvidilo
         'guide': 'Uzanta Gvidilo',
+        'guide-title': 'Uzanta Gvidilo',
         'read-guide': 'Legi Uzantan Gvidilon',
 
+        // ✅ Abono
+        'approving-usdc': 'Aprobante USDC-permeson...',
+        'purchasing-subscription': 'Aĉetante abonon...',
+        'subscription-purchased': 'Abono aĉetita!',
+
+        // ✅ Eraroj
+        'install-wallet': 'Bonvolu instali monujon!',
+        'no-repos-found': 'Neniuj deponejoj trovitaj',
+        'config-load-failed': 'Malsukcesis ŝargi agordon',
+        'config-not-loaded': 'Agordo ankoraŭ ne estas ŝargita!',
+
         // Recovery translations
-        'recovery-required': 'Blockchain-transakcio sendita — rekupero bezonata',
+        'recovery-required': 'Blokĉena transakcio sendita – rekupero bezonata',
         'recovery-ready': 'Preta por daŭrigi de la konservita stato',
         'recovery-upload-incomplete': 'Alŝuto nekompleta — bonvolu rekomenci',
-        'checking-blockchain-tx': 'Kontrolante blockchain-transakcion...',
+        'checking-blockchain-tx': 'Kontrolante blokĉenan transakcion...',
         'recover-backup': 'Rekuperi sekurkopion',
         'no-backup-tx': 'Sekurkopia tx-hash ne trovita',
         'redis-completion-failed': 'Malsukcesis konfirmi la finiĝon de la sekurkopio ĉe la servilo',
@@ -267,10 +303,10 @@ export const translations = {
         'backup-failed': 'Sekurkopio malsukcesis',
 
         // "On-chain Deskriptoro" translations
-        'mint-preparing': 'Preparante la aŭtorizon por On-chain Deskriptoro...',
+        'mint-preparing': 'Preparante la rajtigon por On-chain Deskriptoro...',
         'mint-confirming': 'Konfirmante la kreadon de On-chain Deskriptoro...',
         'mint-success': 'On-chain Deskriptoro kreita!',
-        'mint-authorization-failed': 'Malsukcesis akiri la aŭtorizon por On-chain Deskriptoro',
+        'mint-authorization-failed': 'Malsukcesis akiri la rajtigon por On-chain Deskriptoro',
         'mint-not-authorized': 'Vi ne estas rajtigita krei On-chain Deskriptoron por ĉi tiu deponejo',
         'mint-signature-invalid': 'Nevalida subskribo de On-chain Deskriptoro'
     }
