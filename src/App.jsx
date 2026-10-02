@@ -68,7 +68,7 @@ function App() {
     const purchaseSubscription = useCallback(async () => {
         try {
             setIsLoading(true);
-            setStatus('Apstiprina USDC atļauju...');
+            setStatus(t('approving-usdc'));
             setStatusType('progress');
             
             const provider = new ethers.BrowserProvider(window.ethereum);
@@ -81,13 +81,13 @@ function App() {
             const approveTx = await usdcContract.approve(config.subscriptionAddress, price);
             await approveTx.wait();
             
-            setStatus('Iegādājas abonementu...');
+            setStatus(t('purchasing-subscription'));
             
             const githubHash = ethers.keccak256(ethers.toUtf8Bytes(githubUser));
             const subscribeTx = await subscriptionContract.connect(providerSigner).subscribe(githubHash);
             await subscribeTx.wait();
             
-            setStatus('Abonements iegādāts!');
+            setStatus(t('subscription-purchased'));
             setStatusType('success');
             setLastStatusData({ type: 'subscription-purchased' });
             await checkSubscription();
@@ -95,16 +95,16 @@ function App() {
         } catch (e) {
             setIsLoading(false);
             if (e.code === 'ACTION_REJECTED') {
-                setError('Transakcija atcelta');
+                setError(t('transaction-cancelled'));
             } else {
                 setError(e.message);
             }
         }
-    }, [config, githubUser, checkSubscription]);
+    }, [config, githubUser, checkSubscription, t]);
 
     const connectWallet = useCallback(async () => {
         if (!window.ethereum) {
-            setError('Lūdzu instalē maku!');
+            setError(t('install-wallet'));
             return;
         }
         
@@ -153,7 +153,7 @@ function App() {
             
             const data = await apiJson('/api/github/repos');
             if (!data.success || data.repos.length === 0) {
-                setError('Nav atrasts neviens repozitorijs');
+                setError(t('no-repos-found'));
                 setIsLoading(false);
                 return;
             }
@@ -401,7 +401,7 @@ function App() {
                 const configData = await apiJson('/api/config');
                 setConfig(configData);
             } catch (e) {
-                setError('Neizdevās iegūt konfigurāciju');
+                setError(t('config-load-failed'));
                 return;
             }
             
