@@ -32,36 +32,36 @@ function isValidManifestId(id) {
     return typeof id === 'string' && /^[a-zA-Z0-9_-]{43}$/.test(id);
 }
 
-function getValidatedManifestUrl(gatewayUrl, manifestId) {
+function getValidatedManifestUrl(gatewayUrl, manifestId, t) {
     if (!isValidManifestId(manifestId)) {
-        throw new Error('Nederīgs manifesta ID');
+        throw new Error(t('invalid-manifest-id'));
     }
     
     let parsedUrl;
     try {
         parsedUrl = new URL(gatewayUrl);
     } catch (e) {
-        throw new Error('Nederīgs gateway URL');
+        throw new Error(t('invalid-gateway-url'));
     }
     
     if (!ALLOWED_SCHEMES.includes(parsedUrl.protocol)) {
-        throw new Error('Nederīga shēma');
+        throw new Error(t('invalid-scheme'));
     }
     
     if (!ALLOWED_GATEWAY_HOSTS.includes(parsedUrl.hostname)) {
-        throw new Error('Nederīgs gateway hosts');
+        throw new Error(t('invalid-gateway-host'));
     }
     
     return `${parsedUrl.origin}/raw/${encodeURIComponent(manifestId)}`;
 }
 
-function getSafeErrorMessage(error) {
-    if (!error) return 'Nezināma kļūda';
+function getSafeErrorMessage(error, t) {
+    if (!error) return t('unknown-error');
     if (typeof error === 'string') return error.substring(0, 200);
     if (error.message && typeof error.message === 'string') {
         return error.message.substring(0, 200);
     }
-    return 'Nezināma kļūda';
+    return t('unknown-error');
 }
 
 function BackupPage() {
@@ -113,7 +113,11 @@ function BackupPage() {
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
         let result;
-        try { result = await response.json(); } catch { throw new Error(`Servera kļūda: HTTP ${response.status}`); }
+        try {
+            result = await response.json();
+        } catch {
+            throw new Error(`${t('server-error')} ${response.status}`);
+        }
         if (!response.ok && !result.success) {
             const err = new Error(result.error || `HTTP ${response.status}`);
             err.recoveryRequired = result.recoveryRequired;
@@ -121,7 +125,7 @@ function BackupPage() {
             throw err;
         }
         return result;
-    }, []);
+    }, [t]);
 
     const formatFileSize = useCallback((bytes) => {
         const value = Number(bytes || 0);
@@ -422,7 +426,8 @@ function BackupPage() {
                                             try {
                                                 const manifestUrl = getValidatedManifestUrl(
                                                     configData.arweaveGateway,
-                                                    prevManifestId
+                                                    prevManifestId,
+                                                    t
                                                 );
                                                 const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
                                                 
@@ -499,7 +504,7 @@ function BackupPage() {
                                     } catch (recoveryError) {
                                         setRecoveryRequired(true);
                                         setStatus(t('recovery-required'));
-                                        setError(getSafeErrorMessage(recoveryError));
+                                        setError(getSafeErrorMessage(recoveryError, t));
                                         return;
                                     }
                                 }
@@ -654,7 +659,7 @@ function BackupPage() {
 
                         setCurrentPreviousManifestId(prevManifestId);
 
-                        const manifestUrl = getValidatedManifestUrl(configData.arweaveGateway, prevManifestId);
+                        const manifestUrl = getValidatedManifestUrl(configData.arweaveGateway, prevManifestId, t);
                         const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
                         if (!manifestResponse.ok) throw new Error(t('manifest-load-failed'));
 
@@ -699,7 +704,7 @@ function BackupPage() {
                 }
             } catch (e) {
                 if (cancelled) return;
-                setError(getSafeErrorMessage(e));
+                setError(getSafeErrorMessage(e, t));
                 setFileInfo({ count: 0, sizeText: '', loading: false });
             }
         };
@@ -824,7 +829,7 @@ function BackupPage() {
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
             } else {
-                setError(getSafeErrorMessage(e));
+                setError(getSafeErrorMessage(e, t));
             }
             setIsWorking(false);
         }
@@ -1228,7 +1233,7 @@ function BackupPage() {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             jobId,
-                            error: getSafeErrorMessage(e)
+                            error: getSafeErrorMessage(e, t)
                         })
                     });
 
@@ -1263,7 +1268,7 @@ function BackupPage() {
             if (e.code === 'ACTION_REJECTED' || e.code === 4001) {
                 setError(t('transaction-cancelled'));
             } else {
-                setError(getSafeErrorMessage(e));
+                setError(getSafeErrorMessage(e, t));
             }
         } finally {
             setIsWorking(false);
@@ -1306,7 +1311,7 @@ function BackupPage() {
             setLastStatusData({ type: 'simple', key: 'retry-ready' });
             setIsWorking(false);
         } catch (e) {
-            setError(getSafeErrorMessage(e));
+            setError(getSafeErrorMessage(e, t));
             setIsWorking(false);
         }
     }, [preparedJobId, apiJson, t, repoName]);
@@ -1344,7 +1349,7 @@ function BackupPage() {
             setLastStatusData({ type: 'success', key: 'backup-complete' });
             setIsWorking(false);
         } catch (e) {
-            setError(getSafeErrorMessage(e));
+            setError(getSafeErrorMessage(e, t));
             setIsWorking(false);
         }
     }, [recoveredJobData, preparedJobId, apiJson, t, repoName]);
@@ -1360,7 +1365,7 @@ function BackupPage() {
     }
 
     const finalManifestUrl = lastManifestTxId
-        ? getValidatedManifestUrl(config.arweaveGateway, lastManifestTxId)
+        ? getValidatedManifestUrl(config.arweaveGateway, lastManifestTxId, t)
         : null;
 
     return (
