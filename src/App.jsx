@@ -49,10 +49,14 @@ function App() {
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
         let result;
-        try { result = await response.json(); } catch { throw new Error(`Servera kļūda: HTTP ${response.status}`); }
+        try {
+            result = await response.json();
+        } catch {
+            throw new Error(`${t('server-error')} ${response.status}`);
+        }
         if (!response.ok && !result.success) throw new Error(result.error || `HTTP ${response.status}`);
         return result;
-    }, []);
+    }, [t]);
 
     const checkSubscription = useCallback(async () => {
         try {
