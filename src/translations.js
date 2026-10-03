@@ -83,6 +83,12 @@ export const translations = {
         'config-not-loaded': 'Konfigurācija vēl nav ielādēta!',
         'server-error': 'Servera kļūda: HTTP',
 
+        // ✅ Manifesta validācija
+        'invalid-manifest-id': 'Nederīgs manifesta ID',
+        'invalid-gateway-url': 'Nederīgs gateway URL',
+        'invalid-scheme': 'Nederīga shēma',
+        'invalid-gateway-host': 'Nederīgs gateway hosts',
+
         // Recovery tulkojumi
         'recovery-required': 'Blockchain transakcija ir iesniegta — nepieciešams recovery',
         'recovery-ready': 'Gatavs turpināt no saglabātā stāvokļa',
@@ -188,6 +194,12 @@ export const translations = {
         'config-not-loaded': 'Configuration not loaded yet!',
         'server-error': 'Server error: HTTP',
 
+        // ✅ Manifest validation
+        'invalid-manifest-id': 'Invalid manifest ID',
+        'invalid-gateway-url': 'Invalid gateway URL',
+        'invalid-scheme': 'Invalid scheme',
+        'invalid-gateway-host': 'Invalid gateway host',
+
         // Recovery translations
         'recovery-required': 'Blockchain transaction submitted — recovery required',
         'recovery-ready': 'Ready to continue from saved state',
@@ -292,6 +304,12 @@ export const translations = {
         'config-load-failed': 'Malsukcesis ŝargi agordon',
         'config-not-loaded': 'Agordo ankoraŭ ne estas ŝargita!',
         'server-error': 'Servila eraro: HTTP',
+
+        // ✅ Manifesta validigo
+        'invalid-manifest-id': 'Nevalida manifesta ID',
+        'invalid-gateway-url': 'Nevalida pordego URL',
+        'invalid-scheme': 'Nevalida skemo',
+        'invalid-gateway-host': 'Nevalida pordego gastiganto',
 
         // Recovery translations
         'recovery-required': 'Blokĉena transakcio sendita – rekupero bezonata',
