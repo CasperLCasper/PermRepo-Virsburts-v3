@@ -22,7 +22,7 @@ export const translations = {
         'network-changed': 'Tīkls tika nomainīts — lūdzu, izvēlieties Base tīklu',
         'backup-title': 'PermRepo Backups',
         'repo-label': 'Repozitorijs',
-        'nft-token': 'ID de On-chain Deskriptoro',
+        'nft-token': 'On-chain Deskriptora ID',
         'backup-count': 'Backupu skaits',
         'last-manifest': 'Pēdējais manifests',
         'last-merkle': 'Pēdējā Merkle sakne',
@@ -81,6 +81,7 @@ export const translations = {
         'no-repos-found': 'Nav atrasts neviens repozitorijs',
         'config-load-failed': 'Neizdevās iegūt konfigurāciju',
         'config-not-loaded': 'Konfigurācija vēl nav ielādēta!',
+        'server-error': 'Servera kļūda: HTTP',
 
         // Recovery tulkojumi
         'recovery-required': 'Blockchain transakcija ir iesniegta — nepieciešams recovery',
@@ -185,6 +186,7 @@ export const translations = {
         'no-repos-found': 'No repositories found',
         'config-load-failed': 'Failed to load configuration',
         'config-not-loaded': 'Configuration not loaded yet!',
+        'server-error': 'Server error: HTTP',
 
         // Recovery translations
         'recovery-required': 'Blockchain transaction submitted — recovery required',
@@ -289,6 +291,7 @@ export const translations = {
         'no-repos-found': 'Neniuj deponejoj trovitaj',
         'config-load-failed': 'Malsukcesis ŝargi agordon',
         'config-not-loaded': 'Agordo ankoraŭ ne estas ŝargita!',
+        'server-error': 'Servila eraro: HTTP',
 
         // Recovery translations
         'recovery-required': 'Blokĉena transakcio sendita – rekupero bezonata',
