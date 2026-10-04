@@ -89,11 +89,12 @@ function BackupPage() {
         lastMerkleRoot: null
     });
     
-    const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState({});
+    // ✅ #4 LABOJUMS: Object.create(null) vietā parastā {}
+    const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState(Object.create(null));
     const [currentPreviousHistory, setCurrentPreviousHistory] = useState([]);
     const [currentPreviousManifestId, setCurrentPreviousManifestId] = useState(null);
     const [currentPreviousBackupNumber, setCurrentPreviousBackupNumber] = useState(null);
-    const [currentPreviousEncryptionIVs, setCurrentPreviousEncryptionIVs] = useState({});
+    const [currentPreviousEncryptionIVs, setCurrentPreviousEncryptionIVs] = useState(Object.create(null));
     const [currentMerkleRoot, setCurrentMerkleRoot] = useState(null);
     const [currentIV, setCurrentIV] = useState(null);
     
@@ -101,7 +102,8 @@ function BackupPage() {
     
     const [fileInfo, setFileInfo] = useState({ count: 0, sizeText: '', loading: true });
     const [changedFilesForUpload, setChangedFilesForUpload] = useState([]);
-    const [unchangedFilesForUpload, setUnchangedFilesForUpload] = useState({});
+    // ✅ #4 LABOJUMS: Object.create(null)
+    const [unchangedFilesForUpload, setUnchangedFilesForUpload] = useState(Object.create(null));
     const [preparedJobId, setPreparedJobId] = useState(null);
     const [recoveredJobData, setRecoveredJobData] = useState(null);
 
@@ -398,7 +400,10 @@ function BackupPage() {
                                     setChangedFilesForUpload(jobStatus.changedFileMetadata);
                                 }
                                 if (jobStatus.unchangedFiles) {
-                                    setUnchangedFilesForUpload(jobStatus.unchangedFiles);
+                                    // ✅ #4 LABOJUMS: Object.create(null)
+                                    setUnchangedFilesForUpload(
+                                        Object.assign(Object.create(null), jobStatus.unchangedFiles)
+                                    );
                                 }
 
                                 // ✅ #3 LABOJUMS: atjauno uploadedZipRef no jobStatus
@@ -445,7 +450,10 @@ function BackupPage() {
                                                         typeof prevManifest.encryption.ivs === 'object' &&
                                                         !Array.isArray(prevManifest.encryption.ivs)
                                                     ) {
-                                                        setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
+                                                        // ✅ #4 LABOJUMS: Object.create(null)
+                                                        setCurrentPreviousEncryptionIVs(
+                                                            Object.assign(Object.create(null), prevManifest.encryption.ivs)
+                                                        );
                                                     }
                                                     
                                                     // ✅ Ielādē previous paths (changed/unchanged sadalījumam)
@@ -454,7 +462,10 @@ function BackupPage() {
                                                         typeof prevManifest.paths === 'object' &&
                                                         !Array.isArray(prevManifest.paths)
                                                     ) {
-                                                        setCurrentUnchangedFiles(prevManifest.paths);
+                                                        // ✅ #4 LABOJUMS: Object.create(null)
+                                                        setCurrentUnchangedFiles(
+                                                            Object.assign(Object.create(null), prevManifest.paths)
+                                                        );
                                                     }
                                                 }
                                             } catch (manifestError) {
@@ -647,9 +658,10 @@ function BackupPage() {
                         throw new Error(t('backup-session-invalid'));
                     }
 
-                    let previousPaths = {};
+                    // ✅ #4 LABOJUMS: Object.create(null)
+                    let previousPaths = Object.create(null);
                     let previousHistory = [];
-                    let previousEncryptionIVs = {};
+                    let previousEncryptionIVs = Object.create(null);
 
                     if (metadata.lastManifest && metadata.lastManifest.startsWith('ar://')) {
                         const prevManifestId = metadata.lastManifest.slice(5);
@@ -665,21 +677,24 @@ function BackupPage() {
 
                         const prevManifest = await manifestResponse.json();
                         if (prevManifest && typeof prevManifest.paths === 'object' && !Array.isArray(prevManifest.paths)) {
-                            previousPaths = prevManifest.paths;
-                            setCurrentUnchangedFiles(prevManifest.paths);
+                            // ✅ #4 LABOJUMS
+                            previousPaths = Object.assign(Object.create(null), prevManifest.paths);
+                            setCurrentUnchangedFiles(previousPaths);
                         }
                         if (Array.isArray(prevManifest?.history)) {
                             previousHistory = prevManifest.history;
                             setCurrentPreviousHistory(prevManifest.history);
                         }
                         if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object' && !Array.isArray(prevManifest.encryption.ivs)) {
-                            previousEncryptionIVs = prevManifest.encryption.ivs;
-                            setCurrentPreviousEncryptionIVs(prevManifest.encryption.ivs);
+                            // ✅ #4 LABOJUMS
+                            previousEncryptionIVs = Object.assign(Object.create(null), prevManifest.encryption.ivs);
+                            setCurrentPreviousEncryptionIVs(previousEncryptionIVs);
                         }
                     }
 
                     const changedFiles = [];
-                    const unchangedFiles = {};
+                    // ✅ #4 LABOJUMS: Object.create(null)
+                    const unchangedFiles = Object.create(null);
 
                     for (const file of files) {
                         const previousFile = previousPaths[file.path];
@@ -1000,12 +1015,17 @@ function BackupPage() {
 
                 history.sort((a, b) => Number(b?.backupNumber || 0) - Number(a?.backupNumber || 0));
 
-                const encryptionIVs = { ...currentPreviousEncryptionIVs };
+                // ✅ #4 LABOJUMS: Object.create(null)
+                const encryptionIVs = Object.assign(
+                    Object.create(null),
+                    currentPreviousEncryptionIVs
+                );
 
                 if (iv && iv.length === 12) {
                     encryptionIVs[zipTxId] = Array.from(iv);
                 }
 
+                // ✅ #4 LABOJUMS: Object.create(null)
                 manifest = {
                     manifest: 'arweave/paths',
                     version: '0.2.0',
@@ -1021,7 +1041,7 @@ function BackupPage() {
                             hash: file.hash
                         }))
                     },
-                    paths: {},
+                    paths: Object.create(null),
                     history
                 };
 
