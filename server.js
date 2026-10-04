@@ -1869,13 +1869,14 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
 
         // ✅ #1 LABOJUMS: Serveris ielādē iepriekšējo manifestu un sadala changed/unchanged
         const previousManifest = await loadPreviousManifest(lastManifest);
+        // ✅ #4 LABOJUMS: Object.create(null) pret __proto__ robustness
         const previousPaths =
             previousManifest &&
             previousManifest.paths &&
             typeof previousManifest.paths === 'object' &&
             !Array.isArray(previousManifest.paths)
                 ? previousManifest.paths
-                : {};
+                : Object.create(null);
 
         const reservationBytes = backupResourceController.estimateMemoryBytes(maxFileBytes);
         const jobId = crypto.randomUUID();
@@ -1953,7 +1954,8 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
 
         const jobFiles = [];
         const changedFileMetadata = [];
-        const unchangedFiles = {};
+        // ✅ #4 LABOJUMS: Object.create(null) pret __proto__ robustness
+        const unchangedFiles = Object.create(null);
         let totalBytes = 0;
 
         await writeNdjson(res, {
@@ -2277,6 +2279,7 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
 
         validateJobTxInput(jobId, zipTxId);
 
+        // ✅ #2 LABOJUMS: Stingrāka IV validācija
         // IV validācija (ja padots)
         let normalizedIV = null;
         if (iv !== undefined && iv !== null) {
@@ -2286,7 +2289,18 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                     error: 'Nederīgs IV (jābūt 12 baitu masīvam).'
                 });
             }
-            normalizedIV = iv.map(b => Number(b) & 0xff);
+
+            // ✅ Stingrāka validācija: katram elementam jābūt integer 0-255
+            for (const b of iv) {
+                if (!Number.isInteger(b) || b < 0 || b > 255) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'Nederīgs IV (visiem elementiem jābūt veseliem skaitļiem 0-255).'
+                    });
+                }
+            }
+
+            normalizedIV = iv.map(b => b);
         }
 
         // Merkle root validācija (ja padots)
