@@ -42,6 +42,7 @@ GitHub ir lielisks, bet tas **nav permanents**:
 ### Kā tas strādā?
 
 #### Lietotāja plūsma
+
 1. Savieno GitHub (OAuth)
 2. Savieno maku (MetaMask uz Base)
 3. Iegādājies abonementu (2.5 USDC / mēnesī)
@@ -51,7 +52,8 @@ GitHub ir lielisks, bet tas **nav permanents**:
 7. Pārbaudi (Merkle sakne uz Base)
 
 #### Backup plūsma
-```text
+
+~~~text
 GitHub Repo
        ↓
 Lejupielādē ZIP (GitHub API)
@@ -67,7 +69,7 @@ Augšupielādē manifestu uz Arweave
 Reģistrē uz Base (addBackup)
        ↓
 ✅ Permanentais Backups
-```
+~~~
 
 ### Tehnoloģijas
 
@@ -94,6 +96,16 @@ Reģistrē uz Base (addBackup)
 - Arweave (permanent)
 - Turbo (augšupielādes serviss)
 
+### Ierobežojumi
+
+- **Git submodules** — netiek atbalstīti. PermRepo backupē tikai `blob` tipa failus.
+  Submodule atsauces (`type === 'commit'`) netiek iekļautas backupā.
+
+- **Git LFS** — LFS objekti netiek atsevišķi backupēti.
+  Ja GitHub arhīvā fails ir pieejams kā parasts faila saturs, tas tiek backupēts.
+  Pretējā gadījumā var tikt saglabāts tikai LFS pointer fails
+  (neliels teksta fails ar `oid sha256:...`), nevis pats lielais binārais objekts.
+
 ### Kā sākt?
 
 **Priekšnosacījumi**
@@ -105,9 +117,9 @@ Reģistrē uz Base (addBackup)
 
 **Uzstādīšana**
 
-```bash
+~~~bash
 # Klonē repozitoriju
-git clone [https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git](https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git)
+git clone https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git
 cd PermRepo-Virsburts-v3
 
 # Instalē dependencies
@@ -124,7 +136,7 @@ npm run build
 
 # Palaid serveri
 node server.js
-```
+~~~
 
 **Vides mainīgie** (Skatīt `.env.example` pilnu sarakstu)
 
@@ -151,23 +163,24 @@ node server.js
 **PermRepoNFT**
 ERC-721 NFT (nepārdodams) ar EIP-712 mint autorizāciju, EIP-712 backup autorizāciju un On-chain Deskriptoru katram repozitorijam.
 
-```solidity
+~~~solidity
 function mintRepository(address recipient, string repository, uint256 deadline, bytes signature) external returns (uint256);
 function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string manifestURI, uint256 deadline, bytes signature) external;
 function migrateNFT(uint256 tokenId, address newOwner) external;
-```
+~~~
 
 **PermRepoSubscription**
 USDC abonements (2.5 USDC / mēnesī), balstīts uz GitHub (nevis maku).
 
-```solidity
+~~~solidity
 function subscribe(bytes32 githubHash) external;
 function isSubscribed(bytes32 githubHash) external view returns (bool);
-```
+~~~
 
 ### API endpointi
 
 **GitHub OAuth**
+
 | Metode | Endpoints | Apraksts |
 |---|---|---|
 | GET | `/api/github/login` | Sāk OAuth plūsmu |
@@ -177,12 +190,14 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | GET | `/api/github/repos` | Saraksts ar lietotāja repo |
 
 **Abonements & Autorizācija**
+
 | Metode | Endpoints | Apraksts |
 |---|---|---|
 | GET | `/api/subscription/status` | Iegūst abonementa statusu |
 | POST | `/api/mint-authorization` | Iegūst EIP-712 mint signature |
 
 **Backups**
+
 | Metode | Endpoints | Apraksts |
 |---|---|---|
 | POST | `/api/prepare-backup` | Sagatavo backupu (NDJSON straume) |
@@ -198,12 +213,14 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | POST | `/api/retry-backup` | Mēģina vēlreiz |
 
 **Veselība**
+
 | Metode | Endpoints | Apraksts |
 |---|---|---|
 | GET | `/api/health` | Veselības pārbaude |
 | GET | `/api/config` | Iegūst konfigurāciju |
 
 ### Drošība
+
 1. Nav privāto atslēgu serverī — tikai backend maks autorizāciju parakstīšanai
 2. EIP-712 paraksti — tipizētu datu parakstīšana
 3. Nonce aizsardzība — katram mint/backup ir unikāls nonce
@@ -214,6 +231,7 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 8. CSP headers — Content Security Policy
 
 ### Backend maks
+
 Backend maks (`MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY`):
 - Paraksta EIP-712 mint autorizācijas
 - **NEmaksā** gas
@@ -222,6 +240,7 @@ Backend maks (`MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY`):
 - Tikai paraksta pēc GitHub īpašumtiesību pārbaudes
 
 ### Master Key
+
 Master Key:
 - Ģenerēts pirmajā backupā
 - Parādīts lietotājam vienreiz
@@ -230,7 +249,8 @@ Master Key:
 - **Ja pazaudēts — backupus nevar atšifrēt**
 
 ### Licence
-MIT License  
+
+MIT License
 Copyright (c) 2026 Virsburts PermRepo
 
 ---
@@ -265,6 +285,7 @@ GitHub is great, but it's **not permanent**:
 ### How It Works
 
 #### User Flow
+
 1. Connect GitHub (OAuth)
 2. Connect Wallet (MetaMask on Base)
 3. Buy Subscription (2.5 USDC / month)
@@ -274,7 +295,8 @@ GitHub is great, but it's **not permanent**:
 7. Verify (Merkle root on Base)
 
 #### Backup Flow
-```text
+
+~~~text
 GitHub Repo
        ↓
 Download ZIP (GitHub API)
@@ -290,7 +312,7 @@ Upload Manifest to Arweave
 Register on Base (addBackup)
        ↓
 ✅ Permanent Backup
-```
+~~~
 
 ### Tech Stack
 
@@ -317,6 +339,16 @@ Register on Base (addBackup)
 - Arweave (permanent)
 - Turbo (upload service)
 
+### Limitations
+
+- **Git submodules** — not supported. PermRepo backs up only `blob` type files.
+  Submodule references (`type === 'commit'`) are not included in backups.
+
+- **Git LFS** — LFS objects are not separately backed up.
+  If a file is available as regular file content in the GitHub archive, it is backed up.
+  Otherwise, only the LFS pointer file may be saved
+  (a small text file with `oid sha256:...`), not the large binary object itself.
+
 ### Getting Started
 
 **Prerequisites**
@@ -328,9 +360,9 @@ Register on Base (addBackup)
 
 **Installation**
 
-```bash
+~~~bash
 # Clone repository
-git clone [https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git](https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git)
+git clone https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git
 cd PermRepo-Virsburts-v3
 
 # Install dependencies
@@ -347,7 +379,7 @@ npm run build
 
 # Start server
 node server.js
-```
+~~~
 
 **Environment Variables** (See `.env.example` for full list)
 
@@ -374,23 +406,24 @@ node server.js
 **PermRepoNFT**
 ERC-721 NFT (non-transferable) with EIP-712 mint authorization, EIP-712 backup authorization, and On-chain Descriptor per repository.
 
-```solidity
+~~~solidity
 function mintRepository(address recipient, string repository, uint256 deadline, bytes signature) external returns (uint256);
 function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string manifestURI, uint256 deadline, bytes signature) external;
 function migrateNFT(uint256 tokenId, address newOwner) external;
-```
+~~~
 
 **PermRepoSubscription**
 USDC subscription (2.5 USDC / month), GitHub-based (not wallet-based).
 
-```solidity
+~~~solidity
 function subscribe(bytes32 githubHash) external;
 function isSubscribed(bytes32 githubHash) external view returns (bool);
-```
+~~~
 
 ### API Endpoints
 
 **GitHub OAuth**
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/github/login` | Start OAuth flow |
@@ -400,12 +433,14 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | GET | `/api/github/repos` | List user repos |
 
 **Subscription & Mint Authorization**
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/subscription/status` | Get subscription status |
 | POST | `/api/mint-authorization` | Get EIP-712 mint signature |
 
 **Backups**
+
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/prepare-backup` | Prepare backup (NDJSON stream) |
@@ -421,12 +456,14 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | POST | `/api/retry-backup` | Retry failed backup |
 
 **Health**
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/health` | Health check |
 | GET | `/api/config` | Get configuration |
 
 ### Security
+
 1. No private keys on server — only backend wallet for signing authorizations
 2. EIP-712 signatures — typed data signing
 3. Nonce-based replay protection — each mint/backup has unique nonce
@@ -437,6 +474,7 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 8. CSP headers — Content Security Policy
 
 ### Backend Wallet
+
 The backend wallet (`MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY`):
 - Signs EIP-712 mint authorizations
 - Does **NOT** pay gas
@@ -445,6 +483,7 @@ The backend wallet (`MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY`):
 - Only signs after verifying GitHub ownership
 
 ### Master Key
+
 The Master Key:
 - Generated on first backup
 - Shown to user once
@@ -453,7 +492,8 @@ The Master Key:
 - **If lost — backups cannot be decrypted**
 
 ### License
-MIT License  
+
+MIT License
 Copyright (c) 2026 Virsburts PermRepo
 
 ---
@@ -488,6 +528,7 @@ GitHub estas bonega, sed ĝi **ne estas permanenta**:
 ### Kiel ĝi funkcias?
 
 #### Uzanta fluo
+
 1. Konekti GitHub (OAuth)
 2. Konekti monujon (MetaMask sur Base)
 3. Aĉeti abonon (2.5 USDC / monato)
@@ -497,7 +538,8 @@ GitHub estas bonega, sed ĝi **ne estas permanenta**:
 7. Kontroli (Merkle-radiko sur Base)
 
 #### Sekurkopia fluo
-```text
+
+~~~text
 GitHub Deponejo
        ↓
 Elŝuti ZIP (GitHub API)
@@ -513,7 +555,7 @@ Alŝuti manifeston al Arweave
 Registri sur Base (addBackup)
        ↓
 ✅ Permanentaj Sekurkopio
-```
+~~~
 
 ### Teknologioj
 
@@ -540,6 +582,16 @@ Registri sur Base (addBackup)
 - Arweave (permanenta)
 - Turbo (alŝuta servo)
 
+### Limigoj
+
+- **Git submodules** — ne subtenataj. PermRepo sekurkopias nur dosierojn de tipo `blob`.
+  Submodule-referencoj (`type === 'commit'`) ne estas inkluzivitaj en sekurkopioj.
+
+- **Git LFS** — LFS-objektoj ne estas aparte sekurkopiitaj.
+  Se dosiero estas disponebla kiel ordinara dosiera enhavo en la GitHub-arkivo, ĝi estas sekurkopiita.
+  Alie, nur la LFS-montra dosiero povas esti konservita
+  (malgranda teksta dosiero kun `oid sha256:...`), ne la granda binara objekto mem.
+
 ### Kiel komenci?
 
 **Antaŭkondiĉoj**
@@ -551,9 +603,9 @@ Registri sur Base (addBackup)
 
 **Instalado**
 
-```bash
+~~~bash
 # Kloni deponejon
-git clone [https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git](https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git)
+git clone https://github.com/CasperLCasper/PermRepo-Virsburts-v3.git
 cd PermRepo-Virsburts-v3
 
 # Instali dependecojn
@@ -570,7 +622,7 @@ npm run build
 
 # Lanĉi servilon
 node server.js
-```
+~~~
 
 **Mediaj variabloj** (Vidu `.env.example` por plena listo)
 
@@ -597,23 +649,24 @@ node server.js
 **PermRepoNFT**
 ERC-721 NFT (nealienigebla) kun EIP-712 mint-rauxo, EIP-712 sekurkopia rauxo, kaj On-chain Deskriptoro por ĉiu deponejo.
 
-```solidity
+~~~solidity
 function mintRepository(address recipient, string repository, uint256 deadline, bytes signature) external returns (uint256);
 function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string manifestURI, uint256 deadline, bytes signature) external;
 function migrateNFT(uint256 tokenId, address newOwner) external;
-```
+~~~
 
 **PermRepoSubscription**
 USDC-abono (2.5 USDC / monato), bazita sur GitHub (ne sur monujo).
 
-```solidity
+~~~solidity
 function subscribe(bytes32 githubHash) external;
 function isSubscribed(bytes32 githubHash) external view returns (bool);
-```
+~~~
 
 ### API-finaĵoj
 
 **GitHub OAuth**
+
 | Metodo | Finaĵo | Priskribo |
 |---|---|---|
 | GET | `/api/github/login` | Komenci OAuth-fluon |
@@ -623,12 +676,14 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | GET | `/api/github/repos` | Listo de uzantaj deponejoj |
 
 **Abono & Mint-rauxo**
+
 | Metodo | Finaĵo | Priskribo |
 |---|---|---|
 | GET | `/api/subscription/status` | Akiri abonan staton |
 | POST | `/api/mint-authorization` | Akiri EIP-712 mint-subskribon |
 
 **Sekurkopioj**
+
 | Metodo | Finaĵo | Priskribo |
 |---|---|---|
 | POST | `/api/prepare-backup` | Prepari sekurkopion (NDJSON-fluo) |
@@ -644,12 +699,14 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | POST | `/api/retry-backup` | Reprovi |
 
 **Sano**
+
 | Metodo | Finaĵo | Priskribo |
 |---|---|---|
 | GET | `/api/health` | Sana kontrolo |
 | GET | `/api/config` | Akiri agordon |
 
 ### Sekureco
+
 1. Neniuj privataj ŝlosiloj sur servilo — nur malantaŭa monujo por subskribi rauxojn
 2. EIP-712 subskriboj — subskribo de tipigitaj datumoj
 3. Nonce-bazita protekto — ĉiu mint/sekurkopio havas unikan nonce
@@ -660,6 +717,7 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 8. CSP-kapoj — Content Security Policy
 
 ### Malantaŭa monujo
+
 La malantaŭa monujo (`MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY`):
 - Subskribas EIP-712 mint-rauxojn
 - **NE** pagas gas
@@ -668,6 +726,7 @@ La malantaŭa monujo (`MINT_AUTHORIZATION_SIGNER_PRIVATE_KEY`):
 - Nur subskribas post kontrolo de GitHub-proprieto
 
 ### Ĉefŝlosilo
+
 La Ĉefŝlosilo:
 - Generita ĉe unua sekurkopio
 - Montrita al uzanto unufoje
@@ -676,7 +735,8 @@ La Ĉefŝlosilo:
 - **Se perdita — sekurkopioj ne povas esti malĉifritaj**
 
 ### Licenco
-MIT License  
+
+MIT License
 Copyright (c) 2026 Virsburts PermRepo
 
 ---
