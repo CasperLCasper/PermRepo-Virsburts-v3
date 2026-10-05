@@ -94,8 +94,9 @@ export const translations = {
         'redis-completion-failed': 'Neizdevās apstiprināt backup pabeigšanu serverī',
         'backup-failed': 'Backups neizdevās',
 
-        'unfinished-backup-warning': 'Jums ir nepabeigts backups!',
-        'unfinished-backup-details': 'ZIP arhīvs jau ir augšupielādēts Arweave. Nepieciešams tikai pabeigt backupu.',
+        'unfinished-backup-warning': '⚠️ Jums ir nepabeigts backups! Lūdzu, pabeidziet to pirms jauna backupa sākšanas',
+        'finish-previous-backup': 'Pabeigt iepriekšējo backup',
+        'start-new-backup': 'Sākt jaunu backupu',
 
         'mint-preparing': 'Sagatavo On-chain Deskriptora autorizāciju...',
         'mint-confirming': 'Apstiprina On-chain Deskriptora izveidi...',
@@ -200,8 +201,9 @@ export const translations = {
         'redis-completion-failed': 'Failed to confirm backup completion on server',
         'backup-failed': 'Backup failed',
 
-        'unfinished-backup-warning': 'You have an unfinished backup!',
-        'unfinished-backup-details': 'The ZIP archive is already uploaded to Arweave. Only the backup needs to be completed.',
+        'unfinished-backup-warning': '⚠️ You have an unfinished backup! Please complete it before starting a new one',
+        'finish-previous-backup': 'Finish previous backup',
+        'start-new-backup': 'Start a new backup',
 
         'mint-preparing': 'Preparing On-chain Descriptor authorization...',
         'mint-confirming': 'Confirming On-chain Descriptor creation...',
@@ -306,8 +308,9 @@ export const translations = {
         'redis-completion-failed': 'Malsukcesis konfirmi la finiĝon de la sekurkopio ĉe la servilo',
         'backup-failed': 'Sekurkopio malsukcesis',
 
-        'unfinished-backup-warning': 'Vi havas nefinan sekurkopion!',
-        'unfinished-backup-details': 'La ZIP-arkivo jam estas alŝutita al Arweave. Nur la sekurkopio bezonas esti kompletigita.',
+        'unfinished-backup-warning': '⚠️ Vi havas nefinan sekurkopion! Bonvolu fini ĝin antaŭ ol komenci novan',
+        'finish-previous-backup': 'Fini antaŭan sekurkopion',
+        'start-new-backup': 'Komenci novan sekurkopion',
 
         'mint-preparing': 'Preparante la rajtigon por On-chain Deskriptoro...',
         'mint-confirming': 'Konfirmante la kreadon de On-chain Deskriptoro...',
