@@ -341,3 +341,43 @@ a:hover { text-decoration: underline; }
 .guide-button:active {
     transform: translateY(0);
 }
+
+/* ================================================== */
+/* ✅ Nepabeigta backupa brīdinājums */
+/* ================================================== */
+
+.unfinished-backup-warning {
+    margin-top: 16px;
+    margin-bottom: 12px;
+    padding: 14px 16px;
+    border-radius: 12px;
+    background: rgba(240, 173, 78, 0.15);
+    border: 2px solid rgba(240, 173, 78, 0.7);
+    color: #f0ad4e;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+    animation: warning-pulse 2s ease-in-out infinite;
+}
+
+@keyframes warning-pulse {
+    0%, 100% {
+        border-color: rgba(240, 173, 78, 0.7);
+        box-shadow: 0 0 0 0 rgba(240, 173, 78, 0.4);
+    }
+    50% {
+        border-color: rgba(240, 173, 78, 1);
+        box-shadow: 0 0 16px 2px rgba(240, 173, 78, 0.35);
+    }
+}
+
+/* ✅ Brīdinājuma poga */
+.sign-button-warning {
+    background: linear-gradient(135deg, #f0ad4e 0%, #d98b3a 100%) !important;
+}
+
+.sign-button-warning:hover {
+    background: linear-gradient(135deg, #f0ad4e 0%, #d98b3a 100%) !important;
+    box-shadow: 0 8px 20px rgba(240, 173, 78, 0.4) !important;
+}
