@@ -410,8 +410,8 @@ function BackupPage() {
                                 setNftInfo({
                                     tokenId: jobStatus.tokenId,
                                     backupCount: jobStatus.backupCount || null,
-                                    lastManifest: jobStatus.manifestURI || null,
-                                    lastMerkleRoot: jobStatus.merkleRoot || null
+                                    lastManifest: jobStatus.lastManifest || null,
+                                    lastMerkleRoot: jobStatus.lastMerkleRoot || null
                                 });
 
                                 // Atjauno metadata
@@ -489,11 +489,16 @@ function BackupPage() {
                                     setStatus(t('recovery-ready'));
                                 }
                                 
+                                // ✅ Aprēķina failu izmēru no changedFileMetadata
+                                const changedFiles = Array.isArray(jobStatus.changedFileMetadata)
+                                    ? jobStatus.changedFileMetadata
+                                    : [];
+                                
                                 setFileInfo({
-                                    count: Array.isArray(jobStatus.changedFileMetadata)
-                                        ? jobStatus.changedFileMetadata.length
-                                        : 0,
-                                    sizeText: '',
+                                    count: changedFiles.length,
+                                    sizeText: formatFileSize(
+                                        changedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0)
+                                    ),
                                     loading: false
                                 });
                                 return;
@@ -1314,7 +1319,7 @@ function BackupPage() {
                     </div>
                     <div style={{ padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                         <Icon name="fails" />
-                        {' '}{t('files-size')}: <strong>{fileInfo.sizeText}</strong>
+                        {' '}{t('files-size')}: <strong>{fileInfo.sizeText || '-'}</strong>
                     </div>
                 </>
             )}
