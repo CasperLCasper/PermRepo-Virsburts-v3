@@ -45,6 +45,7 @@ function App() {
     const [lastStatusData, setLastStatusData] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isSigningForBackup, setIsSigningForBackup] = useState(false);
+    const [unfinishedBackup, setUnfinishedBackup] = useState(null);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -68,6 +69,69 @@ function App() {
             console.error('Abonementa pārbaudes kļūda:', e);
         }
     }, [apiJson]);
+
+    // ✅ Nepabeigta backupa pārbaude
+    const checkUnfinishedBackup = useCallback(async (repoName) => {
+        if (!repoName) {
+            setUnfinishedBackup(null);
+            return;
+        }
+
+        const storedJobId = localStorage.getItem(`permrepo-job-${repoName}`);
+
+        if (!storedJobId) {
+            setUnfinishedBackup(null);
+            return;
+        }
+
+        try {
+            const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
+
+            if (!jobStatus.success) {
+                localStorage.removeItem(`permrepo-job-${repoName}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                setUnfinishedBackup(null);
+                return;
+            }
+
+            // ✅ Ja completed → nav nepabeigts
+            if (jobStatus.status === 'completed') {
+                localStorage.removeItem(`permrepo-job-${repoName}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                setUnfinishedBackup(null);
+                return;
+            }
+
+            // ✅ Ja ir zipTxId → nepabeigts
+            if (jobStatus.zipTxId) {
+                setUnfinishedBackup({
+                    jobId: storedJobId,
+                    repoName: repoName,
+                    zipTxId: jobStatus.zipTxId,
+                    status: jobStatus.status
+                });
+                return;
+            }
+
+            // ✅ Nekas nav augšupielādēts → nav nepabeigts
+            localStorage.removeItem(`permrepo-job-${repoName}`);
+            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+            setUnfinishedBackup(null);
+        } catch (e) {
+            localStorage.removeItem(`permrepo-job-${repoName}`);
+            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+            setUnfinishedBackup(null);
+        }
+    }, [apiJson]);
+
+    // ✅ Kad lietotājs izvēlas repo → pārbauda nepabeigtu backupu
+    useEffect(() => {
+        if (selectedRepoName) {
+            checkUnfinishedBackup(selectedRepoName);
+        } else {
+            setUnfinishedBackup(null);
+        }
+    }, [selectedRepoName, checkUnfinishedBackup]);
 
     const purchaseSubscription = useCallback(async () => {
         try {
@@ -336,6 +400,7 @@ function App() {
                 setReposData([]);
                 setSelectedRepoName(null);
                 setError('');
+                setUnfinishedBackup(null);
             } else {
                 const newAddress = ethers.getAddress(accounts[0]);
                 if (userAddress && newAddress.toLowerCase() !== userAddress.toLowerCase()) {
@@ -344,6 +409,7 @@ function App() {
                     setWalletConnected(false);
                     setReposData([]);
                     setSelectedRepoName(null);
+                    setUnfinishedBackup(null);
                     setTimeout(() => {
                         window.location.reload();
                     }, 500);
@@ -369,6 +435,7 @@ function App() {
                     setWalletConnected(false);
                     setReposData([]);
                     setSelectedRepoName(null);
+                    setUnfinishedBackup(null);
                 } else if (switchError.code === 4902) {
                     try {
                         await window.ethereum.request({
@@ -434,6 +501,8 @@ function App() {
             </div>
         );
     }
+
+    const hasUnfinishedBackup = unfinishedBackup && selectedRepo && unfinishedBackup.repoName === selectedRepo.name;
 
     return (
         <div className="container">
@@ -559,6 +628,13 @@ function App() {
                                 {selectedRepo.hasNFT ? (selectedRepo.nftOwnedByWallet ? t('nft-linked') : t('nft-not-owned')) : t('no-nft')}
                             </div>
                             
+                            {/* ✅ Nepabeigta backupa paziņojums */}
+                            {hasUnfinishedBackup && (
+                                <div className="unfinished-backup-warning">
+                                    {t('unfinished-backup-warning')}
+                                </div>
+                            )}
+                            
                             {isSigningForBackup ? (
                                 <div style={{ textAlign: 'center', padding: '20px' }}>
                                     <div className="spinner"></div>
@@ -569,12 +645,23 @@ function App() {
                                     {t('subscription-required')}
                                 </div>
                             ) : selectedRepo.hasNFT && selectedRepo.nftOwnedByWallet ? (
-                                <button 
-                                    onClick={() => createBackup(selectedRepo)}
-                                    className="sign-button"
-                                >
-                                    {t('open-backup')}
-                                </button>
+                                hasUnfinishedBackup ? (
+                                    // ✅ Nepabeigts backups → "Pabeigt iepriekšējo backup"
+                                    <button 
+                                        onClick={() => createBackup(selectedRepo)}
+                                        className="sign-button sign-button-warning"
+                                    >
+                                        {t('finish-previous-backup')}
+                                    </button>
+                                ) : (
+                                    // ✅ Nav nepabeigta → "Izveidot Backup"
+                                    <button 
+                                        onClick={() => createBackup(selectedRepo)}
+                                        className="sign-button"
+                                    >
+                                        {t('open-backup')}
+                                    </button>
+                                )
                             ) : selectedRepo.hasNFT && !selectedRepo.nftOwnedByWallet ? (
                                 <div className="error">
                                     <Icon name="kluda" />
