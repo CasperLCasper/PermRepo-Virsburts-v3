@@ -2892,7 +2892,7 @@ app.post('/api/complete-backup', backupLimiter, async (req, res) => {
 });
 
 // =============================================================================
-// Failed / Retry
+// Failed
 // =============================================================================
 
 app.post('/api/fail-backup', backupLimiter, async (req, res) => {
@@ -2957,70 +2957,6 @@ app.post('/api/fail-backup', backupLimiter, async (req, res) => {
             return res.json({
                 success: true,
                 status: 'failed'
-            });
-        });
-    } catch (error) {
-        const message = errorMessage(error);
-        const status = /nav atrasts|nav github|nepieder|nederīgs|nederīga state/i.test(message) ? 400 : 500;
-
-        return res.status(status).json({
-            success: false,
-            error: message
-        });
-    }
-});
-
-app.post('/api/retry-backup', backupLimiter, async (req, res) => {
-    try {
-        assertSameOrigin(req);
-        if (!requireGithubSession(req, res)) return;
-
-        const { jobId } = req.body;
-
-        if (!validateJobId(jobId)) {
-            return res.status(400).json({
-                success: false,
-                error: 'Nederīgs job ID.'
-            });
-        }
-
-        return await withJobLock(jobId, async () => {
-            const job = await getJob(jobId);
-
-            await verifyJobAuthorization(req, job);
-
-            if (job.status !== 'failed') {
-                throw new Error(
-                    `Retry iespējams tikai no 'failed' statusa, nevis '${job.status}'`
-                );
-            }
-
-            await updateJob(jobId, {
-                status: 'prepared',
-                error: null,
-                failedAt: null,
-                zipTxId: null,
-                zipIv: null,
-                zipMerkleRoot: null,
-                manifestTxId: null,
-                manifest: null,
-                backupNumber: null,
-                manifestHash: null,
-                merkleRoot: null,
-                manifestURI: null,
-                deadline: null,
-                backupTxHash: null,
-                completionTxHash: null,
-                retriedAt: Date.now(),
-                updatedAt: Date.now()
-            }, JOB_TTL_SECONDS);
-
-            logSection('🔄 BACKUP RETRY');
-            logInfo('Job ID', jobId);
-
-            return res.json({
-                success: true,
-                status: 'prepared'
             });
         });
     } catch (error) {
