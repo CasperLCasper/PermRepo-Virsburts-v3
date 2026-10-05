@@ -96,16 +96,6 @@ Reģistrē uz Base (addBackup)
 - Arweave (permanent)
 - Turbo (augšupielādes serviss)
 
-### Ierobežojumi
-
-- **Git submodules** — netiek atbalstīti. PermRepo backupē tikai `blob` tipa failus.
-  Submodule atsauces (`type === 'commit'`) netiek iekļautas backupā.
-
-- **Git LFS** — LFS objekti netiek atsevišķi backupēti.
-  Ja GitHub arhīvā fails ir pieejams kā parasts faila saturs, tas tiek backupēts.
-  Pretējā gadījumā var tikt saglabāts tikai LFS pointer fails
-  (neliels teksta fails ar `oid sha256:...`), nevis pats lielais binārais objekts.
-
 ### Kā sākt?
 
 **Priekšnosacījumi**
@@ -210,7 +200,6 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | POST | `/api/save-backup-tx` | Saglabā backup transakciju |
 | POST | `/api/complete-backup` | Pabeidz backupu |
 | POST | `/api/fail-backup` | Atzīmē backupu kā neizdevušos |
-| POST | `/api/retry-backup` | Mēģina vēlreiz |
 
 **Veselība**
 
@@ -339,16 +328,6 @@ Register on Base (addBackup)
 - Arweave (permanent)
 - Turbo (upload service)
 
-### Limitations
-
-- **Git submodules** — not supported. PermRepo backs up only `blob` type files.
-  Submodule references (`type === 'commit'`) are not included in backups.
-
-- **Git LFS** — LFS objects are not separately backed up.
-  If a file is available as regular file content in the GitHub archive, it is backed up.
-  Otherwise, only the LFS pointer file may be saved
-  (a small text file with `oid sha256:...`), not the large binary object itself.
-
 ### Getting Started
 
 **Prerequisites**
@@ -453,7 +432,6 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | POST | `/api/save-backup-tx` | Save backup transaction |
 | POST | `/api/complete-backup` | Complete backup |
 | POST | `/api/fail-backup` | Mark backup as failed |
-| POST | `/api/retry-backup` | Retry failed backup |
 
 **Health**
 
@@ -582,16 +560,6 @@ Registri sur Base (addBackup)
 - Arweave (permanenta)
 - Turbo (alŝuta servo)
 
-### Limigoj
-
-- **Git submodules** — ne subtenataj. PermRepo sekurkopias nur dosierojn de tipo `blob`.
-  Submodule-referencoj (`type === 'commit'`) ne estas inkluzivitaj en sekurkopioj.
-
-- **Git LFS** — LFS-objektoj ne estas aparte sekurkopiitaj.
-  Se dosiero estas disponebla kiel ordinara dosiera enhavo en la GitHub-arkivo, ĝi estas sekurkopiita.
-  Alie, nur la LFS-montra dosiero povas esti konservita
-  (malgranda teksta dosiero kun `oid sha256:...`), ne la granda binara objekto mem.
-
 ### Kiel komenci?
 
 **Antaŭkondiĉoj**
@@ -696,7 +664,6 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 | POST | `/api/save-backup-tx` | Konservi sekurkopian transakcion |
 | POST | `/api/complete-backup` | Fini sekurkopion |
 | POST | `/api/fail-backup` | Marki sekurkopion kiel malsukcesan |
-| POST | `/api/retry-backup` | Reprovi |
 
 **Sano**
 
