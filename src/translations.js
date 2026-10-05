@@ -66,30 +66,25 @@ export const translations = {
         'invalid-upload-id': 'Nederīgs augšupielādes ID',
         'unknown-error': 'Nezināma kļūda',
 
-        // ✅ Rokasgrāmata
         'guide': 'Lietotāja rokasgrāmata',
         'guide-title': 'Lietotāja rokasgrāmata',
         'read-guide': 'Lasīt rokasgrāmatu',
 
-        // ✅ Abonements
         'approving-usdc': 'Apstiprina USDC atļauju...',
         'purchasing-subscription': 'Iegādājas abonementu...',
         'subscription-purchased': 'Abonements iegādāts!',
 
-        // ✅ Kļūdas
         'install-wallet': 'Lūdzu instalē maku!',
         'no-repos-found': 'Nav atrasts neviens repozitorijs',
         'config-load-failed': 'Neizdevās iegūt konfigurāciju',
         'config-not-loaded': 'Konfigurācija vēl nav ielādēta!',
         'server-error': 'Servera kļūda: HTTP',
 
-        // ✅ Manifesta validācija
         'invalid-manifest-id': 'Nederīgs manifesta ID',
         'invalid-gateway-url': 'Nederīgs gateway URL',
         'invalid-scheme': 'Nederīga shēma',
         'invalid-gateway-host': 'Nederīgs gateway hosts',
 
-        // Recovery tulkojumi
         'recovery-required': 'Blockchain transakcija ir iesniegta — nepieciešams recovery',
         'recovery-ready': 'Gatavs turpināt no saglabātā stāvokļa',
         'recovery-upload-incomplete': 'Augšupielāde nav pabeigta — lūdzu, sāciet no jauna',
@@ -97,11 +92,11 @@ export const translations = {
         'recover-backup': 'Atjaunot backup',
         'no-backup-tx': 'Nav atrasts backup tx hash',
         'redis-completion-failed': 'Neizdevās apstiprināt backup pabeigšanu serverī',
-        'retry-backup': 'Mēģināt vēlreiz',
-        'retry-ready': 'Gatavs atkārtotai augšupielādei',
         'backup-failed': 'Backups neizdevās',
 
-        // "On-chain Deskriptors" tulkojumi
+        'unfinished-backup-warning': 'Jums ir nepabeigts backups!',
+        'unfinished-backup-details': 'ZIP arhīvs jau ir augšupielādēts Arweave. Nepieciešams tikai pabeigt backupu.',
+
         'mint-preparing': 'Sagatavo On-chain Deskriptora autorizāciju...',
         'mint-confirming': 'Apstiprina On-chain Deskriptora izveidi...',
         'mint-success': 'On-chain Deskriptors izveidots!',
@@ -177,30 +172,25 @@ export const translations = {
         'invalid-upload-id': 'Invalid upload ID',
         'unknown-error': 'Unknown error',
 
-        // ✅ User Guide
         'guide': 'User Guide',
         'guide-title': 'User Guide',
         'read-guide': 'Read User Guide',
 
-        // ✅ Subscription
         'approving-usdc': 'Approving USDC allowance...',
         'purchasing-subscription': 'Purchasing subscription...',
         'subscription-purchased': 'Subscription purchased!',
 
-        // ✅ Errors
         'install-wallet': 'Please install a wallet!',
         'no-repos-found': 'No repositories found',
         'config-load-failed': 'Failed to load configuration',
         'config-not-loaded': 'Configuration not loaded yet!',
         'server-error': 'Server error: HTTP',
 
-        // ✅ Manifest validation
         'invalid-manifest-id': 'Invalid manifest ID',
         'invalid-gateway-url': 'Invalid gateway URL',
         'invalid-scheme': 'Invalid scheme',
         'invalid-gateway-host': 'Invalid gateway host',
 
-        // Recovery translations
         'recovery-required': 'Blockchain transaction submitted — recovery required',
         'recovery-ready': 'Ready to continue from saved state',
         'recovery-upload-incomplete': 'Upload incomplete — please start again',
@@ -208,11 +198,11 @@ export const translations = {
         'recover-backup': 'Recover backup',
         'no-backup-tx': 'Backup tx hash not found',
         'redis-completion-failed': 'Failed to confirm backup completion on server',
-        'retry-backup': 'Retry backup',
-        'retry-ready': 'Ready for retry',
         'backup-failed': 'Backup failed',
 
-        // "On-chain Descriptor" translations
+        'unfinished-backup-warning': 'You have an unfinished backup!',
+        'unfinished-backup-details': 'The ZIP archive is already uploaded to Arweave. Only the backup needs to be completed.',
+
         'mint-preparing': 'Preparing On-chain Descriptor authorization...',
         'mint-confirming': 'Confirming On-chain Descriptor creation...',
         'mint-success': 'On-chain Descriptor created!',
@@ -288,30 +278,25 @@ export const translations = {
         'invalid-upload-id': 'Nevalida alŝuta ID',
         'unknown-error': 'Nekonata eraro',
 
-        // ✅ Uzanta Gvidilo
         'guide': 'Uzanta Gvidilo',
         'guide-title': 'Uzanta Gvidilo',
         'read-guide': 'Legi Uzantan Gvidilon',
 
-        // ✅ Abono
         'approving-usdc': 'Aprobante USDC-permeson...',
         'purchasing-subscription': 'Aĉetante abonon...',
         'subscription-purchased': 'Abono aĉetita!',
 
-        // ✅ Eraroj
         'install-wallet': 'Bonvolu instali monujon!',
         'no-repos-found': 'Neniuj deponejoj trovitaj',
         'config-load-failed': 'Malsukcesis ŝargi agordon',
         'config-not-loaded': 'Agordo ankoraŭ ne estas ŝargita!',
         'server-error': 'Servila eraro: HTTP',
 
-        // ✅ Manifesta validigo
         'invalid-manifest-id': 'Nevalida manifesta ID',
         'invalid-gateway-url': 'Nevalida pordego URL',
         'invalid-scheme': 'Nevalida skemo',
         'invalid-gateway-host': 'Nevalida pordego gastiganto',
 
-        // Recovery translations
         'recovery-required': 'Blokĉena transakcio sendita – rekupero bezonata',
         'recovery-ready': 'Preta por daŭrigi de la konservita stato',
         'recovery-upload-incomplete': 'Alŝuto nekompleta — bonvolu rekomenci',
@@ -319,11 +304,11 @@ export const translations = {
         'recover-backup': 'Rekuperi sekurkopion',
         'no-backup-tx': 'Sekurkopia tx-hash ne trovita',
         'redis-completion-failed': 'Malsukcesis konfirmi la finiĝon de la sekurkopio ĉe la servilo',
-        'retry-backup': 'Reprovi sekurkopion',
-        'retry-ready': 'Preta por reprovo',
         'backup-failed': 'Sekurkopio malsukcesis',
 
-        // "On-chain Deskriptoro" translations
+        'unfinished-backup-warning': 'Vi havas nefinan sekurkopion!',
+        'unfinished-backup-details': 'La ZIP-arkivo jam estas alŝutita al Arweave. Nur la sekurkopio bezonas esti kompletigita.',
+
         'mint-preparing': 'Preparante la rajtigon por On-chain Deskriptoro...',
         'mint-confirming': 'Konfirmante la kreadon de On-chain Deskriptoro...',
         'mint-success': 'On-chain Deskriptoro kreita!',
