@@ -77,7 +77,6 @@ function BackupPage() {
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
     const [backupCompleted, setBackupCompleted] = useState(false);
-    const [backupFailed, setBackupFailed] = useState(false);
     const [recoveryRequired, setRecoveryRequired] = useState(false);
     const [lastManifestTxId, setLastManifestTxId] = useState(null);
     const [queuePosition, setQueuePosition] = useState(null);
@@ -89,7 +88,6 @@ function BackupPage() {
         lastMerkleRoot: null
     });
     
-    // ✅ #4 LABOJUMS: Object.create(null) vietā parastā {}
     const [currentUnchangedFiles, setCurrentUnchangedFiles] = useState(Object.create(null));
     const [currentPreviousHistory, setCurrentPreviousHistory] = useState([]);
     const [currentPreviousManifestId, setCurrentPreviousManifestId] = useState(null);
@@ -102,7 +100,6 @@ function BackupPage() {
     
     const [fileInfo, setFileInfo] = useState({ count: 0, sizeText: '', loading: true });
     const [changedFilesForUpload, setChangedFilesForUpload] = useState([]);
-    // ✅ #4 LABOJUMS: Object.create(null)
     const [unchangedFilesForUpload, setUnchangedFilesForUpload] = useState(Object.create(null));
     const [preparedJobId, setPreparedJobId] = useState(null);
     const [recoveredJobData, setRecoveredJobData] = useState(null);
@@ -276,6 +273,9 @@ function BackupPage() {
             case 'simple':
                 setStatus(t(data.key));
                 break;
+            case 'warning':
+                setStatus(t(data.key));
+                break;
             default:
                 setStatus(t(data.key));
         }
@@ -360,33 +360,52 @@ function BackupPage() {
                     try {
                         const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
-                        // ✅ 1. LOGS
-                        console.log('1. RECOVERY jobStatus:', jobStatus);
-
                         if (jobStatus.success) {
-                            // ✅ 1b. LOGS
-                            console.log('1b. RECOVERY status:', {
-                                status: jobStatus.status,
-                                jobId: jobStatus.jobId,
-                                zipTxId: jobStatus.zipTxId,
-                                manifestTxId: jobStatus.manifestTxId
-                            });
-
-                            // ✅ #5 LABOJUMS: prepared arī sāk jaunu
-                            // ✅ ZIP UPLOADING vai PREPARED — sāk pilnīgi jaunu prepare-backup
-                            // ✅ manifest-uploading TAGAD nonāk else zarā (jo ZIP jau ir augšupielādēts)
-                            if (
-                                jobStatus.status === 'prepared' ||
-                                jobStatus.status === 'zip-uploading'
-                            ) {
-                                // ✅ Notīra localStorage
+                            // ✅ Ja jau completed
+                            if (jobStatus.status === 'completed') {
+                                setLastManifestTxId(jobStatus.manifestTxId);
+                                setBackupCompleted(true);
+                                setStatus(t('backup-complete'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
                                 localStorage.removeItem(`permrepo-job-${repoName}`);
                                 localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                                return;
+                            }
 
-                                // ✅ Sāk pilnīgi jaunu prepare-backup (bez return)
-                                shouldStartNewBackup = true;
-                            } else {
-                                // ✅ Turpina ar recovery (zip-uploaded, manifest-uploading, manifest-uploaded, etc.)
+                            // ✅ Ja blockchain-finalizing ar backupTxHash
+                            if (
+                                jobStatus.status === 'blockchain-finalizing' &&
+                                jobStatus.backupTxHash
+                            ) {
+                                setStatus(t('checking-blockchain-tx'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+
+                                try {
+                                    await apiJson('/api/complete-backup', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            jobId: jobStatus.jobId,
+                                            txHash: jobStatus.backupTxHash
+                                        })
+                                    });
+
+                                    setLastManifestTxId(jobStatus.manifestTxId);
+                                    setBackupCompleted(true);
+                                    setStatus(t('backup-complete'));
+                                    localStorage.removeItem(`permrepo-job-${repoName}`);
+                                    localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                                    return;
+                                } catch (recoveryError) {
+                                    setRecoveryRequired(true);
+                                    setStatus(t('recovery-required'));
+                                    setError(getSafeErrorMessage(recoveryError, t));
+                                    return;
+                                }
+                            }
+
+                            // ✅ Ja ZIP ir — turpināt ar manifestu vai blockchain
+                            if (jobStatus.zipTxId) {
                                 setPreparedJobId(jobStatus.jobId);
                                 setNftInfo({
                                     tokenId: jobStatus.tokenId,
@@ -395,156 +414,95 @@ function BackupPage() {
                                     lastMerkleRoot: jobStatus.merkleRoot || null
                                 });
 
-                                // ✅ Atjauno metadata
+                                // Atjauno metadata
                                 if (jobStatus.changedFileMetadata?.length > 0) {
                                     setChangedFilesForUpload(jobStatus.changedFileMetadata);
                                 }
                                 if (jobStatus.unchangedFiles) {
-                                    // ✅ #4 LABOJUMS: Object.create(null)
                                     setUnchangedFilesForUpload(
                                         Object.assign(Object.create(null), jobStatus.unchangedFiles)
                                     );
                                 }
 
-                                // ✅ #3 LABOJUMS: atjauno uploadedZipRef no jobStatus
-                                if (jobStatus.zipTxId) {
-                                    uploadedZipRef.current = {
-                                        txId: jobStatus.zipTxId,
-                                        iv: jobStatus.zipIv || null,
-                                        merkleRoot: jobStatus.zipMerkleRoot || null
-                                    };
-                                }
+                                // Atjauno uploadedZipRef no jobStatus
+                                uploadedZipRef.current = {
+                                    txId: jobStatus.zipTxId,
+                                    iv: jobStatus.zipIv || null,
+                                    merkleRoot: jobStatus.zipMerkleRoot || null
+                                };
 
-                                // ✅ #2 LABOJUMS: ielādē iepriekšējo manifestu no lastManifest
-                                // (nevis manifestURI!) — visiem recovery statusiem
-                                if (
-                                    jobStatus.status === 'zip-uploaded' ||
-                                    jobStatus.status === 'manifest-uploaded' ||
-                                    jobStatus.status === 'blockchain-finalizing'
-                                ) {
-                                    if (jobStatus.lastManifest?.startsWith('ar://')) {
-                                        const prevManifestId = jobStatus.lastManifest.slice(5);
+                                // Ielādē iepriekšējo manifestu
+                                if (jobStatus.lastManifest?.startsWith('ar://')) {
+                                    const prevManifestId = jobStatus.lastManifest.slice(5);
+                                    
+                                    if (isValidManifestId(prevManifestId)) {
+                                        setCurrentPreviousManifestId(prevManifestId);
                                         
-                                        if (isValidManifestId(prevManifestId)) {
-                                            setCurrentPreviousManifestId(prevManifestId);
+                                        try {
+                                            const manifestUrl = getValidatedManifestUrl(
+                                                configData.arweaveGateway,
+                                                prevManifestId,
+                                                t
+                                            );
+                                            const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
                                             
-                                            try {
-                                                const manifestUrl = getValidatedManifestUrl(
-                                                    configData.arweaveGateway,
-                                                    prevManifestId,
-                                                    t
-                                                );
-                                                const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' });
+                                            if (manifestResponse.ok) {
+                                                const prevManifest = await manifestResponse.json();
                                                 
-                                                if (manifestResponse.ok) {
-                                                    const prevManifest = await manifestResponse.json();
-                                                    
-                                                    // ✅ Ielādē history ķēdi
-                                                    if (Array.isArray(prevManifest?.history)) {
-                                                        setCurrentPreviousHistory(prevManifest.history);
-                                                    }
-                                                    
-                                                    // ✅ Ielādē encryption IVs
-                                                    if (
-                                                        prevManifest?.encryption?.ivs &&
-                                                        typeof prevManifest.encryption.ivs === 'object' &&
-                                                        !Array.isArray(prevManifest.encryption.ivs)
-                                                    ) {
-                                                        // ✅ #4 LABOJUMS: Object.create(null)
-                                                        setCurrentPreviousEncryptionIVs(
-                                                            Object.assign(Object.create(null), prevManifest.encryption.ivs)
-                                                        );
-                                                    }
-                                                    
-                                                    // ✅ Ielādē previous paths (changed/unchanged sadalījumam)
-                                                    if (
-                                                        prevManifest?.paths &&
-                                                        typeof prevManifest.paths === 'object' &&
-                                                        !Array.isArray(prevManifest.paths)
-                                                    ) {
-                                                        // ✅ #4 LABOJUMS: Object.create(null)
-                                                        setCurrentUnchangedFiles(
-                                                            Object.assign(Object.create(null), prevManifest.paths)
-                                                        );
-                                                    }
+                                                if (Array.isArray(prevManifest?.history)) {
+                                                    setCurrentPreviousHistory(prevManifest.history);
                                                 }
-                                            } catch (manifestError) {
-                                                console.warn('Neizdevās ielādēt iepriekšējo manifestu:', manifestError);
+                                                
+                                                if (
+                                                    prevManifest?.encryption?.ivs &&
+                                                    typeof prevManifest.encryption.ivs === 'object' &&
+                                                    !Array.isArray(prevManifest.encryption.ivs)
+                                                ) {
+                                                    setCurrentPreviousEncryptionIVs(
+                                                        Object.assign(Object.create(null), prevManifest.encryption.ivs)
+                                                    );
+                                                }
+                                                
+                                                if (
+                                                    prevManifest?.paths &&
+                                                    typeof prevManifest.paths === 'object' &&
+                                                    !Array.isArray(prevManifest.paths)
+                                                ) {
+                                                    setCurrentUnchangedFiles(
+                                                        Object.assign(Object.create(null), prevManifest.paths)
+                                                    );
+                                                }
                                             }
+                                        } catch (manifestError) {
+                                            console.warn('Neizdevās ielādēt iepriekšējo manifestu:', manifestError);
                                         }
                                     }
                                 }
 
                                 setRecoveredJobData(jobStatus);
 
-                                // ✅ Ja jau completed
-                                if (jobStatus.status === 'completed') {
-                                    setLastManifestTxId(jobStatus.manifestTxId);
-                                    setBackupCompleted(true);
-                                    setStatus(t('backup-complete'));
-                                    setFileInfo({ count: 0, sizeText: '', loading: false });
-                                    localStorage.removeItem(`permrepo-job-${repoName}`);
-                                    localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
-                                    return;
-                                }
-
-                                // ✅ Ja blockchain-finalizing ar backupTxHash
-                                if (
-                                    jobStatus.status === 'blockchain-finalizing' &&
-                                    jobStatus.backupTxHash
-                                ) {
-                                    setStatus(t('checking-blockchain-tx'));
-                                    setFileInfo({ count: 0, sizeText: '', loading: false });
-
-                                    try {
-                                        await apiJson('/api/complete-backup', {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({
-                                                jobId: jobStatus.jobId,
-                                                txHash: jobStatus.backupTxHash
-                                            })
-                                        });
-
-                                        setLastManifestTxId(jobStatus.manifestTxId);
-                                        setBackupCompleted(true);
-                                        setStatus(t('backup-complete'));
-                                        localStorage.removeItem(`permrepo-job-${repoName}`);
-                                        localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
-                                        return;
-                                    } catch (recoveryError) {
-                                        setRecoveryRequired(true);
-                                        setStatus(t('recovery-required'));
-                                        setError(getSafeErrorMessage(recoveryError, t));
-                                        return;
-                                    }
-                                }
-
-                                // ✅ Ja failed — rāda retry
+                                // Ja failed ar ZIP — rāda paziņojumu par nepabeigtu backupu
                                 if (jobStatus.status === 'failed') {
-                                    setBackupFailed(true);
-                                    setStatus(t('backup-failed'));
-                                    setFileInfo({ count: 0, sizeText: '', loading: false });
-                                    return;
-                                }
-
-                                // ✅ Ja zip-uploaded / manifest-uploading / manifest-uploaded — var turpināt
-                                if (
-                                    jobStatus.status === 'zip-uploaded' ||
-                                    jobStatus.status === 'manifest-uploading' ||
-                                    jobStatus.status === 'manifest-uploaded'
-                                ) {
+                                    setStatus(t('unfinished-backup-warning'));
+                                    setLastStatusData({ type: 'warning', key: 'unfinished-backup-warning' });
+                                } else {
                                     setStatus(t('recovery-ready'));
-                                    setFileInfo({
-                                        count: Array.isArray(jobStatus.changedFileMetadata)
-                                            ? jobStatus.changedFileMetadata.length
-                                            : 0,
-                                        sizeText: '',
-                                        loading: false
-                                    });
-                                    return;
                                 }
+                                
+                                setFileInfo({
+                                    count: Array.isArray(jobStatus.changedFileMetadata)
+                                        ? jobStatus.changedFileMetadata.length
+                                        : 0,
+                                    sizeText: '',
+                                    loading: false
+                                });
+                                return;
                             }
+
+                            // ✅ Ja ZIP nav — sākt no jauna
+                            localStorage.removeItem(`permrepo-job-${repoName}`);
+                            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                            shouldStartNewBackup = true;
                         } else {
                             // Job nav atrasts
                             localStorage.removeItem(`permrepo-job-${repoName}`);
@@ -658,7 +616,6 @@ function BackupPage() {
                         throw new Error(t('backup-session-invalid'));
                     }
 
-                    // ✅ #4 LABOJUMS: Object.create(null)
                     let previousPaths = Object.create(null);
                     let previousHistory = [];
                     let previousEncryptionIVs = Object.create(null);
@@ -677,7 +634,6 @@ function BackupPage() {
 
                         const prevManifest = await manifestResponse.json();
                         if (prevManifest && typeof prevManifest.paths === 'object' && !Array.isArray(prevManifest.paths)) {
-                            // ✅ #4 LABOJUMS
                             previousPaths = Object.assign(Object.create(null), prevManifest.paths);
                             setCurrentUnchangedFiles(previousPaths);
                         }
@@ -686,14 +642,12 @@ function BackupPage() {
                             setCurrentPreviousHistory(prevManifest.history);
                         }
                         if (prevManifest?.encryption?.ivs && typeof prevManifest.encryption.ivs === 'object' && !Array.isArray(prevManifest.encryption.ivs)) {
-                            // ✅ #4 LABOJUMS
                             previousEncryptionIVs = Object.assign(Object.create(null), prevManifest.encryption.ivs);
                             setCurrentPreviousEncryptionIVs(previousEncryptionIVs);
                         }
                     }
 
                     const changedFiles = [];
-                    // ✅ #4 LABOJUMS: Object.create(null)
                     const unchangedFiles = Object.create(null);
 
                     for (const file of files) {
@@ -735,12 +689,6 @@ function BackupPage() {
     }, [apiJson, repoName, t, formatFileSize]);
 
     const continueBackup = useCallback(async () => {
-        // ✅ 2. LOGS
-        console.log('2. CONTINUE BACKUP:', {
-            recoveredJobData,
-            uploadedZipRef: uploadedZipRef.current
-        });
-
         if (!config) {
             setError(t('config-not-loaded'));
             return;
@@ -760,7 +708,6 @@ function BackupPage() {
         try {
             setIsWorking(true);
             setError('');
-            setBackupFailed(false);
             setRecoveryRequired(false);
             
             const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
@@ -799,7 +746,6 @@ function BackupPage() {
             });
             const backupCount = Number(nftInfo.backupCount || 0);
             
-            // ✅ #4 LABOJUMS: ja ZIP jau eksistē (recovery), tas NAV "new first backup"
             const isRecoveryWithExistingZip = Boolean(
                 recoveredJobData?.zipTxId ||
                 uploadedZipRef.current.txId
@@ -808,7 +754,6 @@ function BackupPage() {
             let keyHex;
             
             if (backupCount === 0 && !isRecoveryWithExistingZip) {
-                // ✅ Patiešām jauns pirmais backup — ģenerē jaunu atslēgu
                 if (!masterKeyRef.current) {
                     const keyBytes = crypto.getRandomValues(new Uint8Array(32));
                     masterKeyRef.current = ethers.hexlify(keyBytes);
@@ -821,7 +766,6 @@ function BackupPage() {
                 }
                 keyHex = masterKeyRef.current;
             } else {
-                // ✅ Recovery VAI ne-pirmais backup — prasa ESOŠO atslēgu
                 keyHex = await promptMasterKey();
                 if (!isValidMasterKey(keyHex)) {
                     setError(t('encrypted-required'));
@@ -862,12 +806,6 @@ function BackupPage() {
         client,
         signerInstance
     ) => {
-        // ✅ 3. LOGS
-        console.log('3. UPLOAD ZIP INPUT:', {
-            uploadedZipRef: uploadedZipRef.current,
-            recoveredJobData
-        });
-
         if (!config || !jobId || !nftInfo.tokenId) {
             setError(t('backup-session-invalid'));
             return;
@@ -880,12 +818,6 @@ function BackupPage() {
             let zipTxId = uploadedZipRef.current.txId || recoveredJobData?.zipTxId;
             let iv = uploadedZipRef.current.iv;
             let merkleRoot = uploadedZipRef.current.merkleRoot;
-
-            // ✅ 4. LOGS
-            console.log('4. UPLOAD ZIP DECISION:', {
-                zipTxId,
-                willCreateNewZip: !zipTxId
-            });
 
             if (zipTxId) {
                 await apiJson('/api/save-zip-tx', {
@@ -964,7 +896,6 @@ function BackupPage() {
                 zipTxId = zipResult.id;
                 uploadedZipRef.current = { txId: zipTxId, iv, merkleRoot };
 
-                // ✅ #3 LABOJUMS: sūta arī iv un merkleRoot
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1015,7 +946,6 @@ function BackupPage() {
 
                 history.sort((a, b) => Number(b?.backupNumber || 0) - Number(a?.backupNumber || 0));
 
-                // ✅ #4 LABOJUMS: Object.create(null)
                 const encryptionIVs = Object.assign(
                     Object.create(null),
                     currentPreviousEncryptionIVs
@@ -1025,7 +955,6 @@ function BackupPage() {
                     encryptionIVs[zipTxId] = Array.from(iv);
                 }
 
-                // ✅ #4 LABOJUMS: Object.create(null)
                 manifest = {
                     manifest: 'arweave/paths',
                     version: '0.2.0',
@@ -1175,7 +1104,6 @@ function BackupPage() {
                 signature
             );
 
-            // ✅ Saglabā tx.hash LOKĀLI un localStorage
             submittedBackupTxHashRef.current = tx.hash;
             try {
                 localStorage.setItem(
@@ -1184,7 +1112,6 @@ function BackupPage() {
                 );
             } catch {}
 
-            // ✅ Paziņo serverim PIRMS tx.wait()
             await apiJson('/api/save-backup-tx', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1218,7 +1145,6 @@ function BackupPage() {
                 return;
             }
 
-            // ✅ Notīra localStorage
             try {
                 localStorage.removeItem(`permrepo-job-${repoName}`);
                 localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
@@ -1236,7 +1162,6 @@ function BackupPage() {
             setStatus(t('backup-complete'));
             setLastStatusData({ type: 'success', key: 'backup-complete' });
         } catch (e) {
-            // ✅ Ja tx.hash jau ir saglabāts — recovery required
             if (submittedBackupTxHashRef.current) {
                 setRecoveryRequired(true);
                 setStatus(t('recovery-required'));
@@ -1246,7 +1171,6 @@ function BackupPage() {
                     backupTxHash: submittedBackupTxHashRef.current
                 }));
             } else {
-                // ✅ Tikai tad fail-backup
                 try {
                     const failResponse = await apiJson('/api/fail-backup', {
                         method: 'POST',
@@ -1257,7 +1181,6 @@ function BackupPage() {
                         })
                     });
 
-                    // ✅ Ja serveris saka recovery required — nevis failed
                     if (failResponse.recoveryRequired) {
                         setRecoveryRequired(true);
                         setStatus(t('recovery-required'));
@@ -1266,11 +1189,8 @@ function BackupPage() {
                             jobId,
                             backupTxHash: failResponse.backupTxHash
                         }));
-                    } else {
-                        setBackupFailed(true);
                     }
                 } catch (failError) {
-                    // Ja fail-backup neizdodas, bet ir recoveryRequired
                     if (failError.recoveryRequired) {
                         setRecoveryRequired(true);
                         setStatus(t('recovery-required'));
@@ -1279,8 +1199,6 @@ function BackupPage() {
                             jobId,
                             backupTxHash: failError.backupTxHash
                         }));
-                    } else {
-                        setBackupFailed(true);
                     }
                 }
             }
@@ -1300,41 +1218,6 @@ function BackupPage() {
         nftInfo.tokenId, calculateMerkleRoot, encryptData,
         userAddress, recoveredJobData
     ]);
-
-    const retryBackup = useCallback(async () => {
-        if (!preparedJobId) {
-            setError(t('backup-session-invalid'));
-            return;
-        }
-
-        try {
-            setIsWorking(true);
-            setError('');
-            setBackupFailed(false);
-            setRecoveryRequired(false);
-
-            await apiJson('/api/retry-backup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jobId: preparedJobId })
-            });
-
-            uploadedZipRef.current = { txId: null, iv: null, merkleRoot: null };
-            uploadedManifestRef.current = { txId: null, manifest: null };
-            submittedBackupTxHashRef.current = null;
-
-            try {
-                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
-            } catch {}
-
-            setStatus(t('retry-ready'));
-            setLastStatusData({ type: 'simple', key: 'retry-ready' });
-            setIsWorking(false);
-        } catch (e) {
-            setError(getSafeErrorMessage(e, t));
-            setIsWorking(false);
-        }
-    }, [preparedJobId, apiJson, t, repoName]);
 
     const recoverBackup = useCallback(async () => {
         const txHash = recoveredJobData?.backupTxHash ||
@@ -1449,21 +1332,6 @@ function BackupPage() {
                         </div>
                     ) : (
                         t('recover-backup')
-                    )}
-                </button>
-            ) : backupFailed && !backupCompleted ? (
-                <button 
-                    onClick={retryBackup}
-                    disabled={isWorking}
-                    className="sign-button"
-                    style={{ marginTop: '20px', background: 'linear-gradient(135deg, #f85149 0%, #da3633 100%)' }}
-                >
-                    {isWorking ? (
-                        <div style={{ textAlign: 'center' }}>
-                            <div className="spinner"></div>
-                        </div>
-                    ) : (
-                        t('retry-backup')
                     )}
                 </button>
             ) : !backupCompleted ? (
