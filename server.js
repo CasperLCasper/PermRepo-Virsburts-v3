@@ -2347,6 +2347,30 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                 );
             }
 
+            // ✅ #1 LABOJUMS: Recovery no failed → zip-uploaded
+            // Ja ZIP jau ir saglabāts, bet statuss ir failed (piemēram, manifests neizdevās)
+            // Atjaunot statusu uz zip-uploaded, lai varētu turpināt
+            if (job.status === 'failed' && job.zipTxId === zipTxId) {
+                await updateJob(jobId, {
+                    status: 'zip-uploaded',
+                    error: null,
+                    failedAt: null,
+                    recoveredFromFailed: true,
+                    recoveredAt: Date.now(),
+                    updatedAt: Date.now()
+                }, JOB_TTL_SECONDS);
+
+                logSection('🔄 RECOVERED FROM FAILED (ZIP)');
+                logInfo('Job ID', jobId);
+                logInfo('Zip TxId', zipTxId);
+
+                return res.json({
+                    success: true,
+                    recovered: true,
+                    status: 'zip-uploaded'
+                });
+            }
+
             if (job.status !== 'zip-uploading') {
                 throw new Error(
                     `ZIP var saglabāt tikai no 'zip-uploading' statusa, nevis '${job.status}'`
@@ -2469,6 +2493,30 @@ app.post('/api/save-manifest-tx', backupLimiter, async (req, res) => {
                 throw new Error(
                     `Nevar mainīt manifestu pēc statusa: ${job.status}.`
                 );
+            }
+
+            // ✅ #2 LABOJUMS: Recovery no failed → manifest-uploaded
+            // Ja manifests jau ir saglabāts, bet statuss ir failed
+            // Atjaunot statusu uz manifest-uploaded, lai varētu turpināt
+            if (job.status === 'failed' && job.manifestTxId === manifestTxId) {
+                await updateJob(jobId, {
+                    status: 'manifest-uploaded',
+                    error: null,
+                    failedAt: null,
+                    recoveredFromFailed: true,
+                    recoveredAt: Date.now(),
+                    updatedAt: Date.now()
+                }, JOB_TTL_SECONDS);
+
+                logSection('🔄 RECOVERED FROM FAILED (MANIFEST)');
+                logInfo('Job ID', jobId);
+                logInfo('Manifest TxId', manifestTxId);
+
+                return res.json({
+                    success: true,
+                    recovered: true,
+                    status: 'manifest-uploaded'
+                });
             }
 
             if (job.status !== 'manifest-uploading') {
