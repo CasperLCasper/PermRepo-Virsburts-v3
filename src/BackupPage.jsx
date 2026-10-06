@@ -941,8 +941,13 @@ function BackupPage() {
                     );
 
                     if (!alreadyExists) {
+                        // ✅ B VARIANTS: backupNumber = šī backupa numurs (sākas ar 1)
+                        const currentBackupNumber = Number.isInteger(currentPreviousBackupNumber)
+                            ? currentPreviousBackupNumber + 1
+                            : 1;
+
                         history.push({
-                            backupNumber: currentPreviousBackupNumber || history.length,
+                            backupNumber: currentBackupNumber,
                             manifestId: currentPreviousManifestId,
                             url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
                         });
