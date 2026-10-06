@@ -941,16 +941,23 @@ function BackupPage() {
                     );
 
                     if (!alreadyExists) {
-                        // ✅ B VARIANTS: backupNumber = šī backupa numurs (sākas ar 1)
-                        const currentBackupNumber = Number.isInteger(currentPreviousBackupNumber)
-                            ? currentPreviousBackupNumber + 1
+                        // ✅ A VARIANTS: backupNumber = currentPreviousBackupNumber (bez +1)
+                        const prevBackupNumber = Number.isInteger(currentPreviousBackupNumber)
+                            ? currentPreviousBackupNumber
                             : 1;
 
-                        history.push({
-                            backupNumber: currentBackupNumber,
-                            manifestId: currentPreviousManifestId,
-                            url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
-                        });
+                        // ✅ Pārbauda, vai šāds backupNumber jau nav history
+                        const numberExists = history.some(
+                            entry => Number(entry?.backupNumber) === prevBackupNumber
+                        );
+
+                        if (!numberExists) {
+                            history.push({
+                                backupNumber: prevBackupNumber,
+                                manifestId: currentPreviousManifestId,
+                                url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
+                            });
+                        }
                     }
                 }
 
