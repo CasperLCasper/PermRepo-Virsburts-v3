@@ -119,6 +119,7 @@ function BackupPage() {
         }
         if (!response.ok && !result.success) {
             const err = new Error(result.error || `HTTP ${response.status}`);
+            err.status = response.status;
             err.recoveryRequired = result.recoveryRequired;
             err.backupTxHash = result.backupTxHash;
             throw err;
@@ -515,10 +516,20 @@ function BackupPage() {
                             shouldStartNewBackup = true;
                         }
                     } catch (recoveryError) {
-                        // Job nav atrasts — sāk jaunu
-                        localStorage.removeItem(`permrepo-job-${repoName}`);
-                        localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
-                        shouldStartNewBackup = true;
+                        if (recoveryError.status === 404) {
+                            // Job tiešām nav atrasts vai Redis TTL ir beidzies
+                            localStorage.removeItem(`permrepo-job-${repoName}`);
+                            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                            shouldStartNewBackup = true;
+                        } else {
+                            // Nevar secināt, ka job neeksistē.
+                            // Servera/tīkla kļūdas gadījumā jaunu backupu nesākam.
+                            console.error('Neizdevās pārbaudīt backup job:', recoveryError);
+
+                            setError(getSafeErrorMessage(recoveryError, t));
+                            setFileInfo({ count: 0, sizeText: '', loading: false });
+                            return;
+                        }
                     }
                 }
 
