@@ -510,7 +510,6 @@ function BackupPage() {
                             localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
                             shouldStartNewBackup = true;
                         }
-                        // ✅ else bloks ir noņemts
                     } catch (recoveryError) {
                         if (recoveryError.status === 404) {
                             // Job tiešām nav atrasts vai Redis TTL ir beidzies
@@ -1289,9 +1288,23 @@ function BackupPage() {
         );
     }
 
-    const finalManifestUrl = lastManifestTxId
-        ? getValidatedManifestUrl(config.arweaveGateway, lastManifestTxId, t)
-        : null;
+    // ✅ try/catch ap getValidatedManifestUrl, lai novērstu renderēšanas sabrukumu
+    let finalManifestUrl = null;
+
+    if (lastManifestTxId) {
+        try {
+            finalManifestUrl = getValidatedManifestUrl(
+                config.arweaveGateway,
+                lastManifestTxId,
+                t
+            );
+        } catch (manifestError) {
+            console.warn(
+                'Neizdevās izveidot manifesta URL:',
+                manifestError
+            );
+        }
+    }
 
     return (
         <div className="container">
@@ -1388,7 +1401,7 @@ function BackupPage() {
                         {' '}{status}
                     </div>
 
-                    {backupCompleted && lastManifestTxId && (
+                    {backupCompleted && lastManifestTxId && finalManifestUrl && (
                         <div style={{ marginTop: '12px' }}>
                             <Icon name="manifests" />
                             {' '}{t('manifest-link')}:{' '}
