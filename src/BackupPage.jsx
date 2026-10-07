@@ -509,11 +509,6 @@ function BackupPage() {
                             localStorage.removeItem(`permrepo-job-${repoName}`);
                             localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
                             shouldStartNewBackup = true;
-                        } else {
-                            // Job nav atrasts
-                            localStorage.removeItem(`permrepo-job-${repoName}`);
-                            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
-                            shouldStartNewBackup = true;
                         }
                     } catch (recoveryError) {
                         if (recoveryError.status === 404) {
@@ -952,12 +947,10 @@ function BackupPage() {
                     );
 
                     if (!alreadyExists) {
-                        // ✅ A VARIANTS: backupNumber = currentPreviousBackupNumber (bez +1)
                         const prevBackupNumber = Number.isInteger(currentPreviousBackupNumber)
                             ? currentPreviousBackupNumber
                             : 1;
 
-                        // ✅ Pārbauda, vai šāds backupNumber jau nav history
                         const numberExists = history.some(
                             entry => Number(entry?.backupNumber) === prevBackupNumber
                         );
