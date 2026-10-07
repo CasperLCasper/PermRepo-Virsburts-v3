@@ -510,6 +510,7 @@ function BackupPage() {
                             localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
                             shouldStartNewBackup = true;
                         }
+                        // ✅ else bloks ir noņemts
                     } catch (recoveryError) {
                         if (recoveryError.status === 404) {
                             // Job tiešām nav atrasts vai Redis TTL ir beidzies
