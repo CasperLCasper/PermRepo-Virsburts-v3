@@ -355,6 +355,8 @@ function BackupPage() {
 
                 // ✅ Recovery no localStorage
                 const storedJobId = localStorage.getItem(`permrepo-job-${repoName}`);
+                // ✅ #3 LABOJUMS: nolasām arī storedBackupTx
+                const storedBackupTx = localStorage.getItem(`permrepo-backup-tx-${repoName}`);
                 let shouldStartNewBackup = !storedJobId;
 
                 if (storedJobId) {
@@ -362,8 +364,14 @@ function BackupPage() {
                         const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
                         if (jobStatus.success) {
-                            // ✅ Ja jau completed
+                            // ✅ #4 LABOJUMS: Ja jau completed — atjaunot nftInfo
                             if (jobStatus.status === 'completed') {
+                                setNftInfo({
+                                    tokenId: jobStatus.tokenId || null,
+                                    backupCount: jobStatus.backupCount || null,
+                                    lastManifest: jobStatus.manifestURI || null,
+                                    lastMerkleRoot: jobStatus.merkleRoot || null
+                                });
                                 setLastManifestTxId(jobStatus.manifestTxId);
                                 setBackupCompleted(true);
                                 setStatus(t('backup-complete'));
@@ -391,6 +399,13 @@ function BackupPage() {
                                         })
                                     });
 
+                                    // ✅ #4 LABOJUMS: Atjaunot nftInfo arī šeit
+                                    setNftInfo({
+                                        tokenId: jobStatus.tokenId || null,
+                                        backupCount: jobStatus.backupCount || null,
+                                        lastManifest: jobStatus.manifestURI || null,
+                                        lastMerkleRoot: jobStatus.merkleRoot || null
+                                    });
                                     setLastManifestTxId(jobStatus.manifestTxId);
                                     setBackupCompleted(true);
                                     setStatus(t('backup-complete'));
@@ -403,6 +418,24 @@ function BackupPage() {
                                     setError(getSafeErrorMessage(recoveryError, t));
                                     return;
                                 }
+                            }
+
+                            // ✅ #3 LABOJUMS: blockchain-finalizing BEZ backupTxHash, bet localStorage satur tx
+                            if (
+                                jobStatus.status === 'blockchain-finalizing' &&
+                                !jobStatus.backupTxHash &&
+                                storedBackupTx
+                            ) {
+                                // Blockchain tx ir nosūtīts, bet serveris nezina
+                                setRecoveryRequired(true);
+                                setStatus(t('recovery-required'));
+                                setRecoveredJobData({
+                                    ...jobStatus,
+                                    jobId: jobStatus.jobId,
+                                    backupTxHash: storedBackupTx
+                                });
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                return;
                             }
 
                             // ✅ Ja ZIP ir — turpināt ar manifestu vai blockchain
@@ -1162,6 +1195,16 @@ function BackupPage() {
             if (!redisCompleted) {
                 setError(t('redis-completion-failed'));
                 setRecoveryRequired(true);
+                setRecoveredJobData(prev => ({
+                    ...prev,
+                    jobId,
+                    backupTxHash: tx.hash,
+                    manifestTxId: manifestTxId,
+                    tokenId: nftInfo.tokenId,
+                    backupCount: (onChainBackupCount + 1n).toString(),
+                    manifestURI: manifestURI,
+                    merkleRoot: merkleRoot
+                }));
                 setIsWorking(false);
                 return;
             }
@@ -1189,7 +1232,9 @@ function BackupPage() {
                 setRecoveredJobData(prev => ({
                     ...prev,
                     jobId,
-                    backupTxHash: submittedBackupTxHashRef.current
+                    backupTxHash: submittedBackupTxHashRef.current,
+                    manifestTxId: manifestTxId,
+                    tokenId: nftInfo.tokenId
                 }));
             } else {
                 try {
@@ -1267,7 +1312,17 @@ function BackupPage() {
                 localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
             } catch {}
 
-            setLastManifestTxId(recoveredJobData?.manifestTxId);
+            // ✅ #4 LABOJUMS: Atjaunot nftInfo arī šeit
+            if (recoveredJobData) {
+                setNftInfo({
+                    tokenId: recoveredJobData.tokenId || nftInfo.tokenId || null,
+                    backupCount: recoveredJobData.backupCount || nftInfo.backupCount || null,
+                    lastManifest: recoveredJobData.manifestURI || nftInfo.lastManifest || null,
+                    lastMerkleRoot: recoveredJobData.merkleRoot || nftInfo.lastMerkleRoot || null
+                });
+            }
+
+            setLastManifestTxId(recoveredJobData?.manifestTxId || lastManifestTxId);
             setBackupCompleted(true);
             setStatus(t('backup-complete'));
             setLastStatusData({ type: 'success', key: 'backup-complete' });
@@ -1276,7 +1331,7 @@ function BackupPage() {
             setError(getSafeErrorMessage(e, t));
             setIsWorking(false);
         }
-    }, [recoveredJobData, preparedJobId, apiJson, t, repoName]);
+    }, [recoveredJobData, preparedJobId, apiJson, t, repoName, nftInfo, lastManifestTxId]);
 
     if (!config) {
         return (
