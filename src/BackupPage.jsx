@@ -355,7 +355,6 @@ function BackupPage() {
 
                 // ✅ Recovery no localStorage
                 const storedJobId = localStorage.getItem(`permrepo-job-${repoName}`);
-                // ✅ #3 LABOJUMS: nolasām arī storedBackupTx
                 const storedBackupTx = localStorage.getItem(`permrepo-backup-tx-${repoName}`);
                 let shouldStartNewBackup = !storedJobId;
 
@@ -364,7 +363,7 @@ function BackupPage() {
                         const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
                         if (jobStatus.success) {
-                            // ✅ #4 LABOJUMS: Ja jau completed — atjaunot nftInfo
+                            // ✅ Ja jau completed — atjaunot nftInfo
                             if (jobStatus.status === 'completed') {
                                 setNftInfo({
                                     tokenId: jobStatus.tokenId || null,
@@ -399,7 +398,6 @@ function BackupPage() {
                                         })
                                     });
 
-                                    // ✅ #4 LABOJUMS: Atjaunot nftInfo arī šeit
                                     setNftInfo({
                                         tokenId: jobStatus.tokenId || null,
                                         backupCount: jobStatus.backupCount || null,
@@ -420,13 +418,12 @@ function BackupPage() {
                                 }
                             }
 
-                            // ✅ #3 LABOJUMS: blockchain-finalizing BEZ backupTxHash, bet localStorage satur tx
+                            // ✅ Blockchain-finalizing BEZ backupTxHash, bet localStorage satur tx
                             if (
                                 jobStatus.status === 'blockchain-finalizing' &&
                                 !jobStatus.backupTxHash &&
                                 storedBackupTx
                             ) {
-                                // Blockchain tx ir nosūtīts, bet serveris nezina
                                 setRecoveryRequired(true);
                                 setStatus(t('recovery-required'));
                                 setRecoveredJobData({
@@ -448,7 +445,6 @@ function BackupPage() {
                                     lastMerkleRoot: jobStatus.lastMerkleRoot || null
                                 });
 
-                                // Atjauno metadata
                                 if (jobStatus.changedFileMetadata?.length > 0) {
                                     setChangedFilesForUpload(jobStatus.changedFileMetadata);
                                 }
@@ -458,14 +454,12 @@ function BackupPage() {
                                     );
                                 }
 
-                                // Atjauno uploadedZipRef no jobStatus
                                 uploadedZipRef.current = {
                                     txId: jobStatus.zipTxId,
                                     iv: jobStatus.zipIv || null,
                                     merkleRoot: jobStatus.zipMerkleRoot || null
                                 };
 
-                                // Ielādē iepriekšējo manifestu
                                 if (jobStatus.lastManifest?.startsWith('ar://')) {
                                     const prevManifestId = jobStatus.lastManifest.slice(5);
                                     
@@ -515,7 +509,6 @@ function BackupPage() {
 
                                 setRecoveredJobData(jobStatus);
 
-                                // Ja failed ar ZIP — rāda paziņojumu par nepabeigtu backupu
                                 if (jobStatus.status === 'failed') {
                                     setStatus(t('unfinished-backup-warning'));
                                     setLastStatusData({ type: 'warning', key: 'unfinished-backup-warning' });
@@ -523,7 +516,6 @@ function BackupPage() {
                                     setStatus(t('recovery-ready'));
                                 }
                                 
-                                // ✅ Aprēķina failu izmēru no changedFileMetadata
                                 const changedFiles = Array.isArray(jobStatus.changedFileMetadata)
                                     ? jobStatus.changedFileMetadata
                                     : [];
@@ -538,22 +530,17 @@ function BackupPage() {
                                 return;
                             }
 
-                            // ✅ Ja ZIP nav — sākt no jauna
                             localStorage.removeItem(`permrepo-job-${repoName}`);
                             localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
                             shouldStartNewBackup = true;
                         }
                     } catch (recoveryError) {
                         if (recoveryError.status === 404) {
-                            // Job tiešām nav atrasts vai Redis TTL ir beidzies
                             localStorage.removeItem(`permrepo-job-${repoName}`);
                             localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
                             shouldStartNewBackup = true;
                         } else {
-                            // Nevar secināt, ka job neeksistē.
-                            // Servera/tīkla kļūdas gadījumā jaunu backupu nesākam.
                             console.error('Neizdevās pārbaudīt backup job:', recoveryError);
-
                             setError(getSafeErrorMessage(recoveryError, t));
                             setFileInfo({ count: 0, sizeText: '', loading: false });
                             return;
@@ -561,7 +548,6 @@ function BackupPage() {
                     }
                 }
 
-                // ✅ Ja jāsāk jauns backup — turpina ar prepare-backup
                 if (shouldStartNewBackup) {
                     const response = await fetch('/api/prepare-backup', {
                         method: 'POST',
@@ -863,13 +849,20 @@ function BackupPage() {
             let iv = uploadedZipRef.current.iv;
             let merkleRoot = uploadedZipRef.current.merkleRoot;
 
-            if (zipTxId) {
+            // ✅ #5 LABOJUMS: ja recovered job jau satur manifestu, neizsaucam save-zip-tx
+            // (ZIP jau ir saglabāts, un serverim jāveic failed → manifest-uploaded)
+            const hasRecoveredManifest = Boolean(
+                recoveredJobData?.manifestTxId &&
+                recoveredJobData?.manifest
+            );
+
+            if (zipTxId && !hasRecoveredManifest) {
                 await apiJson('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jobId, zipTxId, iv, merkleRoot })
                 });
-            } else {
+            } else if (!zipTxId) {
                 await apiJson('/api/start-zip-upload', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1312,7 +1305,6 @@ function BackupPage() {
                 localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
             } catch {}
 
-            // ✅ #4 LABOJUMS: Atjaunot nftInfo arī šeit
             if (recoveredJobData) {
                 setNftInfo({
                     tokenId: recoveredJobData.tokenId || nftInfo.tokenId || null,
@@ -1343,7 +1335,6 @@ function BackupPage() {
         );
     }
 
-    // ✅ try/catch ap getValidatedManifestUrl, lai novērstu renderēšanas sabrukumu
     let finalManifestUrl = null;
 
     if (lastManifestTxId) {
