@@ -36,6 +36,8 @@ const VALID_JOB_STATUSES = [
 ];
 
 // ✅ Pilns state machine
+// ✅ #1 LABOJUMS: failed → zip-uploaded un failed → manifest-uploaded
+// (recovery no failed ar jau saglabātu ZIP/manifestu)
 const VALID_TRANSITIONS = {
     'prepared': ['zip-uploading', 'failed'],
     'zip-uploading': ['zip-uploaded', 'failed'],
@@ -44,7 +46,11 @@ const VALID_TRANSITIONS = {
     'manifest-uploaded': ['blockchain-finalizing', 'failed'],
     'blockchain-finalizing': ['completed', 'failed'],
     'completed': [],
-    'failed': ['prepared']
+    'failed': [
+        'prepared',
+        'zip-uploaded',
+        'manifest-uploaded'
+    ]
 };
 
 /**
