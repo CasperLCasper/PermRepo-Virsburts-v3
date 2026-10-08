@@ -28,6 +28,15 @@ function Icon({ name }) {
     return <img src={`/icons/${name}.svg`} className="icon-inline" alt="" aria-hidden="true" />;
 }
 
+function getSafeErrorMessage(error, t) {
+    if (!error) return t('unknown-error');
+    if (typeof error === 'string') return error.substring(0, 200);
+    if (error.message && typeof error.message === 'string') {
+        return error.message.substring(0, 200);
+    }
+    return t('unknown-error');
+}
+
 function App() {
     const navigate = useNavigate();
     const { currentLanguage, t, switchLanguage } = useLanguage();
@@ -55,7 +64,13 @@ function App() {
         } catch {
             throw new Error(`${t('server-error')} ${response.status}`);
         }
-        if (!response.ok && !result.success) throw new Error(result.error || `HTTP ${response.status}`);
+        if (!response.ok && !result.success) {
+            const err = new Error(result.error || `HTTP ${response.status}`);
+            err.status = response.status;
+            err.recoveryRequired = result.recoveryRequired;
+            err.backupTxHash = result.backupTxHash;
+            throw err;
+        }
         return result;
     }, [t]);
 
@@ -118,9 +133,17 @@ function App() {
             localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
             setUnfinishedBackup(null);
         } catch (e) {
-            localStorage.removeItem(`permrepo-job-${repoName}`);
-            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
-            setUnfinishedBackup(null);
+            if (e.status === 404) {
+                // Job tiešām nav atrasts — dzēšam localStorage
+                localStorage.removeItem(`permrepo-job-${repoName}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                setUnfinishedBackup(null);
+            } else {
+                // Īslaicīga kļūda — NEDZĒŠAM localStorage
+                console.error('Neizdevās pārbaudīt backup job:', e);
+                // Nezīmējam unfinishedBackup, jo nezinām statusu
+                setUnfinishedBackup(null);
+            }
         }
     }, [apiJson]);
 
