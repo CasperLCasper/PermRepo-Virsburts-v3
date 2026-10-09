@@ -210,14 +210,13 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 
 ### Drošība
 
-1. Nav privāto atslēgu serverī — tikai backend maks autorizāciju parakstīšanai
-2. EIP-712 paraksti — tipizētu datu parakstīšana
-3. Nonce aizsardzība — katram mint/backup ir unikāls nonce
-4. Deadline ierobežojums — paraksti beidzas pēc 15 minūtēm
-5. GitHub īpašumtiesību pārbaude — backend pārbauda repo īpašumtiesības
-6. Šifrēti backupi — AES-GCM ar lietotāja Master Key
-7. Tikai HTTPS — visi savienojumi šifrēti
-8. CSP headers — Content Security Policy
+1. EIP-712 paraksti — tipizētu datu parakstīšana
+2. Nonce aizsardzība — katram mint/backup ir unikāls nonce
+3. Deadline ierobežojums — paraksti beidzas pēc 15 minūtēm
+4. GitHub īpašumtiesību pārbaude — backend pārbauda repo īpašumtiesības
+5. Šifrēti backupi — AES-GCM ar lietotāja Master Key
+6. Tikai HTTPS — visi savienojumi šifrēti
+7. CSP headers — Content Security Policy
 
 ### Backend maks
 
@@ -442,14 +441,13 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 
 ### Security
 
-1. No private keys on server — only backend wallet for signing authorizations
-2. EIP-712 signatures — typed data signing
-3. Nonce-based replay protection — each mint/backup has unique nonce
-4. Deadline-based expiration — signatures expire after 15 minutes
-5. GitHub ownership verification — backend verifies repo ownership
-6. Encrypted backups — AES-GCM with user's Master Key
-7. HTTPS only — all connections encrypted
-8. CSP headers — Content Security Policy
+1. EIP-712 signatures — typed data signing
+2. Nonce-based replay protection — each mint/backup has unique nonce
+3. Deadline-based expiration — signatures expire after 15 minutes
+4. GitHub ownership verification — backend verifies repo ownership
+5. Encrypted backups — AES-GCM with user's Master Key
+6. HTTPS only — all connections encrypted
+7. CSP headers — Content Security Policy
 
 ### Backend Wallet
 
@@ -674,14 +672,13 @@ function isSubscribed(bytes32 githubHash) external view returns (bool);
 
 ### Sekureco
 
-1. Neniuj privataj ŝlosiloj sur servilo — nur malantaŭa monujo por subskribi rauxojn
-2. EIP-712 subskriboj — subskribo de tipigitaj datumoj
-3. Nonce-bazita protekto — ĉiu mint/sekurkopio havas unikan nonce
-4. Deadline-limigo — subskriboj finiĝas post 15 minutoj
-5. GitHub-proprieta kontrolo — malantaŭo kontrolas deponejan proprieton
-6. Ĉifritaj sekurkopioj — AES-GCM kun uzanta Ĉefŝlosilo
-7. Nur HTTPS — ĉiuj konektoj ĉifritaj
-8. CSP-kapoj — Content Security Policy
+1. EIP-712 subskriboj — subskribo de tipigitaj datumoj
+2. Nonce-bazita protekto — ĉiu mint/sekurkopio havas unikan nonce
+3. Deadline-limigo — subskriboj finiĝas post 15 minutoj
+4. GitHub-proprieta kontrolo — malantaŭo kontrolas deponejan proprieton
+5. Ĉifritaj sekurkopioj — AES-GCM kun uzanta Ĉefŝlosilo
+6. Nur HTTPS — ĉiuj konektoj ĉifritaj
+7. CSP-kapoj — Content Security Policy
 
 ### Malantaŭa monujo
 
