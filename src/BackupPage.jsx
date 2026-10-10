@@ -71,7 +71,11 @@ function BackupPage() {
     
     const [config, setConfig] = useState(null);
     const repoName = searchParams.get('repo');
+    const repositoryId = searchParams.get('repoId');
+    const repositoryFullName = searchParams.get('repoFullName');
+    const repoStorageKey = repositoryId && /^\d+$/.test(repositoryId) ? repositoryId : repoName;
     const [githubUser, setGithubUser] = useState(null);
+    const [githubUserId, setGithubUserId] = useState(null);
     const [userAddress, setUserAddress] = useState(null);
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
@@ -299,7 +303,7 @@ function BackupPage() {
                 if (cancelled) return;
                 setConfig(configData);
 
-                if (!repoName || !/^[a-zA-Z0-9_.-]{1,100}$/.test(repoName)) {
+                if (!repoName || !/^[a-zA-Z0-9_.-]{1,100}$/.test(repoName) || !repositoryId || !/^\d+$/.test(repositoryId) || !Number.isSafeInteger(Number(repositoryId)) || BigInt(repositoryId) <= 0n) {
                     setError(t('invalid-repo'));
                     setFileInfo({ count: 0, sizeText: '', loading: false });
                     return;
@@ -311,6 +315,7 @@ function BackupPage() {
                     return;
                 }
                 setGithubUser(userData.user);
+                setGithubUserId(String(userData.userId));
 
                 if (!window.ethereum) {
                     setError(t('connect-wallet'));
@@ -354,8 +359,8 @@ function BackupPage() {
                 }
 
                 // ✅ Recovery no localStorage
-                const storedJobId = localStorage.getItem(`permrepo-job-${repoName}`);
-                const storedBackupTx = localStorage.getItem(`permrepo-backup-tx-${repoName}`);
+                const storedJobId = localStorage.getItem(`permrepo-job-${repoStorageKey}`);
+                const storedBackupTx = localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`);
                 let shouldStartNewBackup = !storedJobId;
 
                 if (storedJobId) {
@@ -375,8 +380,8 @@ function BackupPage() {
                                 setBackupCompleted(true);
                                 setStatus(t('backup-complete'));
                                 setFileInfo({ count: 0, sizeText: '', loading: false });
-                                localStorage.removeItem(`permrepo-job-${repoName}`);
-                                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                                localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
+                                localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
                                 return;
                             }
 
@@ -407,8 +412,8 @@ function BackupPage() {
                                     setLastManifestTxId(jobStatus.manifestTxId);
                                     setBackupCompleted(true);
                                     setStatus(t('backup-complete'));
-                                    localStorage.removeItem(`permrepo-job-${repoName}`);
-                                    localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                                    localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
+                                    localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
                                     return;
                                 } catch (recoveryError) {
                                     setRecoveryRequired(true);
@@ -530,14 +535,14 @@ function BackupPage() {
                                 return;
                             }
 
-                            localStorage.removeItem(`permrepo-job-${repoName}`);
-                            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                            localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
+                            localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
                             shouldStartNewBackup = true;
                         }
                     } catch (recoveryError) {
                         if (recoveryError.status === 404) {
-                            localStorage.removeItem(`permrepo-job-${repoName}`);
-                            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                            localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
+                            localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
                             shouldStartNewBackup = true;
                         } else {
                             console.error('Neizdevās pārbaudīt backup job:', recoveryError);
@@ -553,7 +558,7 @@ function BackupPage() {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'same-origin',
-                        body: JSON.stringify({ repoName, walletAddress: currentAddress })
+                        body: JSON.stringify({ repositoryId: Number(repositoryId), walletAddress: currentAddress })
                     });
 
                     if (!response.ok) {
@@ -618,7 +623,7 @@ function BackupPage() {
                                     setPreparedJobId(parsed.jobId);
                                     try {
                                         localStorage.setItem(
-                                            `permrepo-job-${repoName}`,
+                                            `permrepo-job-${repoStorageKey}`,
                                             parsed.jobId
                                         );
                                     } catch {}
@@ -1006,7 +1011,10 @@ function BackupPage() {
                     manifest: 'arweave/paths',
                     version: '0.2.0',
                     metadata: {
-                        repo: `${githubUser}/${repoName}`
+                        repo: repositoryFullName || `${githubUser}/${repoName}`, // backward-compatible display field
+                        repositoryId: String(repositoryId),
+                        repositoryName: repositoryFullName || `${githubUser}/${repoName}`, 
+                        githubUserId: githubUserId ? String(githubUserId) : null
                     },
                     encryption: { ivs: encryptionIVs },
                     archive: {
@@ -1154,7 +1162,7 @@ function BackupPage() {
             submittedBackupTxHashRef.current = tx.hash;
             try {
                 localStorage.setItem(
-                    `permrepo-backup-tx-${repoName}`,
+                    `permrepo-backup-tx-${repoStorageKey}`,
                     tx.hash
                 );
             } catch {}
@@ -1203,8 +1211,8 @@ function BackupPage() {
             }
 
             try {
-                localStorage.removeItem(`permrepo-job-${repoName}`);
-                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
             } catch {}
 
             setNftInfo({
@@ -1280,7 +1288,7 @@ function BackupPage() {
 
     const recoverBackup = useCallback(async () => {
         const txHash = recoveredJobData?.backupTxHash ||
-            localStorage.getItem(`permrepo-backup-tx-${repoName}`);
+            localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`);
 
         if (!txHash) {
             setError(t('no-backup-tx'));
@@ -1301,8 +1309,8 @@ function BackupPage() {
             });
 
             try {
-                localStorage.removeItem(`permrepo-job-${repoName}`);
-                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
             } catch {}
 
             if (recoveredJobData) {
@@ -1400,7 +1408,7 @@ function BackupPage() {
                 </>
             )}
             
-            {recoveryRequired && (recoveredJobData?.backupTxHash || localStorage.getItem(`permrepo-backup-tx-${repoName}`)) ? (
+            {recoveryRequired && (recoveredJobData?.backupTxHash || localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`)) ? (
                 <button 
                     onClick={recoverBackup}
                     disabled={isWorking}
