@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from './LanguageContext';
 
 const NFT_ABI = [
-    "function mintRepository(address recipient, string calldata repository, uint256 deadline, bytes calldata signature) external returns (uint256)",
+    "function mintRepository(address recipient, uint256 repositoryId, string calldata repositoryName, uint256 deadline, bytes calldata signature) external returns (uint256)",
     "function repositoryTokens(bytes32 repoHash) external view returns (uint256)",
     "function ownerOf(uint256 tokenId) external view returns (address)",
     "function getBackupCount(uint256 tokenId) external view returns (uint256)",
@@ -44,6 +44,7 @@ function App() {
     const [userAddress, setUserAddress] = useState(null);
     const [signer, setSigner] = useState(null);
     const [githubUser, setGithubUser] = useState(null);
+    const [githubUserId, setGithubUserId] = useState(null);
     const [reposData, setReposData] = useState([]);
     const [selectedRepoName, setSelectedRepoName] = useState(null);
     const [subscriptionStatus, setSubscriptionStatus] = useState(null);
@@ -92,7 +93,9 @@ function App() {
             return;
         }
 
-        const storedJobId = localStorage.getItem(`permrepo-job-${repoName}`);
+        const selectedRepo = reposData.find(repo => repo.name === repoName);
+        const repoKey = selectedRepo?.id != null ? String(selectedRepo.id) : repoName;
+        const storedJobId = localStorage.getItem(`permrepo-job-${repoKey}`);
 
         if (!storedJobId) {
             setUnfinishedBackup(null);
@@ -103,16 +106,16 @@ function App() {
             const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
             if (!jobStatus.success) {
-                localStorage.removeItem(`permrepo-job-${repoName}`);
-                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                localStorage.removeItem(`permrepo-job-${repoKey}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoKey}`);
                 setUnfinishedBackup(null);
                 return;
             }
 
             // ✅ Ja completed → nav nepabeigts
             if (jobStatus.status === 'completed') {
-                localStorage.removeItem(`permrepo-job-${repoName}`);
-                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                localStorage.removeItem(`permrepo-job-${repoKey}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoKey}`);
                 setUnfinishedBackup(null);
                 return;
             }
@@ -129,14 +132,14 @@ function App() {
             }
 
             // ✅ Nekas nav augšupielādēts → nav nepabeigts
-            localStorage.removeItem(`permrepo-job-${repoName}`);
-            localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+            localStorage.removeItem(`permrepo-job-${repoKey}`);
+            localStorage.removeItem(`permrepo-backup-tx-${repoKey}`);
             setUnfinishedBackup(null);
         } catch (e) {
             if (e.status === 404) {
                 // Job tiešām nav atrasts — dzēšam localStorage
-                localStorage.removeItem(`permrepo-job-${repoName}`);
-                localStorage.removeItem(`permrepo-backup-tx-${repoName}`);
+                localStorage.removeItem(`permrepo-job-${repoKey}`);
+                localStorage.removeItem(`permrepo-backup-tx-${repoKey}`);
                 setUnfinishedBackup(null);
             } else {
                 // Īslaicīga kļūda — NEDZĒŠAM localStorage
@@ -145,7 +148,7 @@ function App() {
                 setUnfinishedBackup(null);
             }
         }
-    }, [apiJson]);
+    }, [apiJson, reposData]);
 
     // ✅ Kad lietotājs izvēlas repo → pārbauda nepabeigtu backupu
     useEffect(() => {
@@ -174,7 +177,8 @@ function App() {
             
             setStatus(t('purchasing-subscription'));
             
-            const githubHash = ethers.keccak256(ethers.toUtf8Bytes(githubUser));
+            if (!githubUserId || !Number.isSafeInteger(Number(githubUserId))) throw new Error('Nederīgs GitHub user ID.');
+            const githubHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [BigInt(githubUserId)]));
             const subscribeTx = await subscriptionContract.connect(providerSigner).subscribe(githubHash);
             await subscribeTx.wait();
             
@@ -191,7 +195,7 @@ function App() {
                 setError(e.message);
             }
         }
-    }, [config, githubUser, checkSubscription, t]);
+    }, [config, githubUserId, checkSubscription, t]);
 
     const connectWallet = useCallback(async () => {
         if (!window.ethereum) {
@@ -253,9 +257,8 @@ function App() {
             
             const reposWithStatus = [];
             for (const repo of data.repos) {
-                const fullRepoName = `${githubUser}/${repo.name}`;
                 const repoHash = ethers.keccak256(
-                    ethers.AbiCoder.defaultAbiCoder().encode(['string'], [fullRepoName])
+                    ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [BigInt(repo.id)])
                 );
                 const tokenId = await nftContract.repositoryTokens(repoHash);
                 
@@ -296,7 +299,7 @@ function App() {
             setIsLoading(false);
             setError(e.message);
         }
-    }, [config, apiJson, githubUser, t]);
+    }, [config, apiJson, t]);
 
     const mintNFT = useCallback(async (repoName) => {
         if (!subscriptionStatus?.isSubscribed) {
@@ -313,13 +316,14 @@ function App() {
             const nftSigner = await provider.getSigner();
             const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, nftSigner);
             
-            const fullRepoName = `${githubUser}/${repoName}`;
+            const repo = reposData.find(item => item.name === repoName);
+            if (!repo) throw new Error('Repozitorijs nav atrasts.');
 
             const authData = await apiJson('/api/mint-authorization', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    repository: fullRepoName,
+                    repositoryId: repo.id,
                     walletAddress: userAddress
                 })
             });
@@ -333,7 +337,8 @@ function App() {
 
             const tx = await nftWrite.mintRepository(
                 userAddress,
-                fullRepoName,
+                BigInt(repo.id),
+                repo.full_name,
                 BigInt(authData.deadline),
                 authData.signature
             );
@@ -352,7 +357,7 @@ function App() {
                 setError(e.message || t('mint-authorization-failed'));
             }
         }
-    }, [config, githubUser, userAddress, connectWallet, subscriptionStatus, t, apiJson]);
+    }, [config, userAddress, connectWallet, subscriptionStatus, t, apiJson, reposData]);
 
     const createBackup = useCallback(async (repo) => {
         if (!window.ethereum || !userAddress) {
@@ -382,9 +387,11 @@ function App() {
                 throw new Error(t('nft-not-owned'));
             }
 
-            navigate(`/backup?repo=${encodeURIComponent(repo.name)}`, {
+            navigate(`/backup?repo=${encodeURIComponent(repo.name)}&repoId=${repo.id}&repoFullName=${encodeURIComponent(repo.full_name)}`, {
                 state: {
                     walletAddress: currentAddress,
+                    repositoryId: String(repo.id),
+                    repositoryFullName: repo.full_name,
                     nftTokenId: repo.tokenId,
                     backupCount: repo.backupCount,
                     lastManifest: repo.lastManifest,
@@ -503,7 +510,10 @@ function App() {
                 const userData = await apiJson('/api/github/user');
                 if (userData.success) {
                     setGithubUser(userData.user);
+                    setGithubUserId(String(userData.userId));
                     await checkSubscription();
+                } else if (userData.requiresReauth) {
+                    window.location.href = '/api/github/login';
                 }
             } catch (e) {
                 console.error('Init kļūda:', e);
