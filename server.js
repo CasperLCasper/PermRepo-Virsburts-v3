@@ -442,16 +442,23 @@ function validateTxHash(hash) {
     );
 }
 
-function githubOwnerHash(login) {
-    return ethers.keccak256(ethers.toUtf8Bytes(login));
+function githubUserHash(githubUserId) {
+    const id = Number(githubUserId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        throw new Error('Nederīgs GitHub user ID.');
+    }
+    return ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [BigInt(id)])
+    );
 }
 
-function repositoryHash(fullRepoName) {
+function repositoryHash(githubRepositoryId) {
+    const id = Number(githubRepositoryId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        throw new Error('Nederīgs GitHub repo ID.');
+    }
     return ethers.keccak256(
-        ethers.AbiCoder.defaultAbiCoder().encode(
-            ['string'],
-            [fullRepoName]
-        )
+        ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [BigInt(id)])
     );
 }
 
@@ -548,6 +555,7 @@ async function loadPreviousManifest(lastManifest) {
 }
 
 const NFT_ABI = [
+    'function mintRepository(address recipient, uint256 repositoryId, string repositoryName, uint256 deadline, bytes signature) external returns (uint256)',
     'function repositoryTokens(bytes32 repoHash) external view returns (uint256)',
     'function ownerOf(uint256 tokenId) external view returns (address)',
     'function getBackupCount(uint256 tokenId) external view returns (uint256)',
@@ -738,7 +746,7 @@ const githubApiLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Pārāk daudz GitHub operāciju — mēģini vēlāk.' },
-    keyGenerator: req => req.session.githubUser || req.ip
+    keyGenerator: req => req.session.githubUserId || req.session.githubUser || req.ip
 });
 
 const backupLimiter = rateLimit({
@@ -747,7 +755,7 @@ const backupLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Pārāk daudz backup operāciju — mēģini vēlāk.' },
-    keyGenerator: req => req.session.githubUser || req.ip
+    keyGenerator: req => req.session.githubUserId || req.session.githubUser || req.ip
 });
 
 const mintAuthorizationLimiter = rateLimit({
@@ -756,7 +764,7 @@ const mintAuthorizationLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Pārāk daudz mint operāciju — mēģini vēlāk.' },
-    keyGenerator: req => req.session.githubUser || req.ip
+    keyGenerator: req => req.session.githubUserId || req.session.githubUser || req.ip
 });
 
 class GitHubRateLimiter {
@@ -823,7 +831,7 @@ function createOAuthState() {
 }
 
 function requireGithubSession(req, res) {
-    if (!req.session.githubToken || !req.session.githubUser) {
+    if (!req.session.githubToken || !req.session.githubUser || !Number.isSafeInteger(Number(req.session.githubUserId)) || Number(req.session.githubUserId) <= 0) {
         res.status(401).json({
             success: false,
             error: 'Nav GitHub autorizācijas'
@@ -872,9 +880,53 @@ async function getGitHubRepository(githubToken, owner, repo) {
 
     return {
         id: data.id,
+        ownerId: data.owner?.id,
+        ownerLogin: data.owner?.login,
         fullName,
         defaultBranch: data.default_branch,
         private: Boolean(data.private),
+        archived: Boolean(data.archived),
+        permissions: data.permissions || null
+    };
+}
+
+async function getGitHubRepositoryById(githubToken, repositoryId) {
+    const id = Number(repositoryId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        throw new Error('Nederīgs GitHub repo ID.');
+    }
+
+    const response = await fetchWithRetry(
+        `https://api.github.com/repositories/${id}`,
+        {
+            headers: {
+                Authorization: `Bearer ${githubToken}`,
+                Accept: 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28'
+            }
+        }
+    );
+    const data = await response.json();
+
+    if (!response.ok || !data || typeof data !== 'object') {
+        throw new Error(response.status === 404
+            ? 'GitHub repozitorijs nav atrasts vai kontam nav piekļuves.'
+            : 'Neizdevās iegūt GitHub repozitorija datus.');
+    }
+    if (data.archived) throw new Error('Arhivēts GitHub repozitorijs nav pieejams backupam.');
+    if (!Number.isSafeInteger(data.id) || data.id !== id) throw new Error('GitHub repo ID nesakrīt ar pieprasīto.');
+    if (!data.owner || !Number.isSafeInteger(data.owner.id) || !data.full_name || !data.default_branch) {
+        throw new Error('GitHub repozitorija dati nav pilnīgi.');
+    }
+
+    return {
+        id: data.id,
+        ownerId: data.owner.id,
+        ownerLogin: data.owner.login,
+        fullName: data.full_name,
+        defaultBranch: data.default_branch,
+        private: Boolean(data.private),
+        archived: Boolean(data.archived),
         permissions: data.permissions || null
     };
 }
@@ -1190,7 +1242,7 @@ async function processRepoArchive(archive, onFile) {
     }
 }
 
-async function verifySubscription(githubUser) {
+async function verifySubscription(githubUserId) {
     const provider = getProvider();
 
     const subscriptionContract = new ethers.Contract(
@@ -1199,7 +1251,7 @@ async function verifySubscription(githubUser) {
         provider
     );
 
-    const githubHash = githubOwnerHash(githubUser);
+    const githubHash = githubUserHash(githubUserId);
 
     const isSubscribed = await subscriptionContract.isSubscribed(githubHash);
 
@@ -1298,11 +1350,17 @@ function validateManifest(manifest) {
 async function verifyJobAuthorization(req, job) {
     if (!job) throw new Error('Backup job nav atrasts.');
 
-    if (!req.session.githubToken || !req.session.githubUser) {
+    if (!req.session.githubToken || !req.session.githubUser || !req.session.githubUserId) {
         throw new Error('Nav GitHub autorizācijas.');
     }
 
-    if (req.session.githubUser !== job.githubUser) {
+    // Jaunajiem job autorizācija balstās uz nemaināmo GitHub user ID.
+    // Vecā job login pārbaude saglabāta tikai iepriekš izveidotu job pabeigšanai.
+    if (job.githubUserId != null) {
+        if (String(req.session.githubUserId) !== String(job.githubUserId)) {
+            throw new Error('GitHub konts nesakrīt ar backup job.');
+        }
+    } else if (req.session.githubUser !== job.githubUser) {
         throw new Error('GitHub lietotājs nesakrīt ar backup job.');
     }
 
@@ -1424,7 +1482,8 @@ app.get('/api/github/callback', githubApiLimiter, async (req, res) => {
 
         const userData = await userResponse.json();
 
-        if (!userData.login || typeof userData.login !== 'string') {
+        if (!userData.login || typeof userData.login !== 'string' ||
+            !Number.isSafeInteger(userData.id) || userData.id <= 0) {
             return res.redirect('/?error=user');
         }
 
@@ -1437,6 +1496,7 @@ app.get('/api/github/callback', githubApiLimiter, async (req, res) => {
 
                 req.session.githubToken = tokenData.access_token;
                 req.session.githubUser = userData.login;
+                req.session.githubUserId = userData.id;
                 req.session.githubAvatar = userData.avatar_url || null;
 
                 resolve();
@@ -1476,13 +1536,14 @@ app.post('/api/github/logout', async (req, res) => {
 });
 
 app.get('/api/github/user', async (req, res) => {
-    if (!req.session.githubUser) {
-        return res.json({ success: false });
+    if (!req.session.githubUser || !Number.isSafeInteger(Number(req.session.githubUserId)) || Number(req.session.githubUserId) <= 0) {
+        return res.json({ success: false, requiresReauth: Boolean(req.session.githubUser) });
     }
 
     return res.json({
         success: true,
         user: req.session.githubUser,
+        userId: String(req.session.githubUserId),
         avatar: req.session.githubAvatar || null
     });
 });
@@ -1517,6 +1578,7 @@ app.get('/api/github/repos', githubApiLimiter, async (req, res) => {
                 if (repo?.owner?.login === user) {
                     repos.push({
                         id: repo.id,
+                        ownerId: repo.owner?.id,
                         name: repo.name,
                         full_name: repo.full_name,
                         private: Boolean(repo.private),
@@ -1562,7 +1624,7 @@ app.get('/api/subscription/status', async (req, res) => {
             provider
         );
 
-        const githubHash = githubOwnerHash(req.session.githubUser);
+        const githubHash = githubUserHash(req.session.githubUserId);
 
         const [isSubscribed, expiry, remainingTime, price] = await Promise.all([
             subscriptionContract.isSubscribed(githubHash),
@@ -1577,7 +1639,8 @@ app.get('/api/subscription/status', async (req, res) => {
             expiry: expiry.toString(),
             remainingTime: remainingTime.toString(),
             price: price.toString(),
-            githubUser: req.session.githubUser
+            githubUser: req.session.githubUser,
+            githubUserId: String(req.session.githubUserId)
         });
     } catch (error) {
         return res.status(500).json({
@@ -1596,52 +1659,35 @@ app.post('/api/mint-authorization', mintAuthorizationLimiter, async (req, res) =
         assertSameOrigin(req);
         if (!requireGithubSession(req, res)) return;
 
-        const { repository, walletAddress } = req.body;
-        const githubUser = req.session.githubUser;
+        const { repositoryId, walletAddress } = req.body;
+        const githubUserId = Number(req.session.githubUserId);
         const githubToken = req.session.githubToken;
         const normalizedWallet = safeWallet(walletAddress);
+        const id = Number(repositoryId);
 
         if (!normalizedWallet) {
-            return res.status(400).json({
-                success: false,
-                error: 'Nederīga maka adrese.'
-            });
+            return res.status(400).json({ success: false, error: 'Nederīga maka adrese.' });
+        }
+        if (!Number.isSafeInteger(id) || id <= 0) {
+            return res.status(400).json({ success: false, error: 'Nederīgs GitHub repo ID.' });
         }
 
-        if (
-            typeof repository !== 'string' ||
-            !/^[a-zA-Z0-9_.-]{1,100}\/[a-zA-Z0-9_.-]{1,100}$/.test(repository)
-        ) {
-            return res.status(400).json({
-                success: false,
-                error: 'Nederīgs repo nosaukums.'
-            });
+        const repoData = await getGitHubRepositoryById(githubToken, id);
+
+        // Sākotnējo deskriptoru drīkst izveidot tikai personīgā repo īpašnieks.
+        // Pēc repo pārvietošanas jau esošo deskriptoru turpina lietot pēc repo ID.
+        if (repoData.ownerId !== githubUserId) {
+            return res.status(403).json({ success: false, error: 'Jaunu On-chain Deskriptoru var izveidot tikai repozitorija īpašnieks.' });
+        }
+        if (!repoData.permissions || (!repoData.permissions.admin && !repoData.permissions.push)) {
+            return res.status(403).json({ success: false, error: 'Tev nav tiesību uz šo repozitoriju.' });
         }
 
-        const [owner, repo] = repository.split('/');
-
-        if (owner !== githubUser) {
-            return res.status(403).json({
-                success: false,
-                error: 'Repozitorijs nepieder šim GitHub lietotājam.'
-            });
-        }
-
-        // ✅ Pārbauda GitHub repo ownership
-        const repoData = await getGitHubRepository(
-            githubToken,
-            owner,
-            repo
-        );
-
-        if (
-            !repoData.permissions ||
-            (!repoData.permissions.admin && !repoData.permissions.push)
-        ) {
-            return res.status(403).json({
-                success: false,
-                error: 'Tev nav tiesību uz šo repozitoriju.'
-            });
+        const repositoryName = repoData.fullName;
+        const repoHash = repositoryHash(id);
+        const readContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, getProvider());
+        if (await readContract.repositoryTokens(repoHash) !== 0n) {
+            return res.status(409).json({ success: false, error: 'Šim GitHub repozitorijam On-chain Deskriptors jau eksistē.' });
         }
 
         // ✅ Iegūst nonce un defaultURI no kontrakta
@@ -1685,17 +1731,18 @@ app.post('/api/mint-authorization', mintAuthorizationLimiter, async (req, res) =
         const types = {
             MintRepository: [
                 { name: 'recipient', type: 'address' },
-                { name: 'repository', type: 'string' },
+                { name: 'repositoryId', type: 'uint256' },
+                { name: 'repositoryName', type: 'string' },
                 { name: 'uri', type: 'string' },
                 { name: 'deadline', type: 'uint256' },
                 { name: 'nonce', type: 'uint256' }
             ]
         };
 
-        // ✅ EIP-712 value
         const value = {
             recipient: normalizedWallet,
-            repository: repository,
+            repositoryId: BigInt(id),
+            repositoryName: repositoryName,
             uri: defaultURI,
             deadline: deadline,
             nonce: currentNonce
@@ -1785,19 +1832,15 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
         assertSameOrigin(req);
         if (!requireGithubSession(req, res)) return;
 
-        const { repoName, walletAddress } = req.body;
+        const { repositoryId, walletAddress } = req.body;
         const githubToken = req.session.githubToken;
         const githubUser = req.session.githubUser;
+        const githubUserId = String(req.session.githubUserId);
+        const id = Number(repositoryId);
         const normalizedWallet = safeWallet(walletAddress);
 
-        if (
-            typeof repoName !== 'string' ||
-            !/^[a-zA-Z0-9_.-]{1,100}$/.test(repoName)
-        ) {
-            return res.status(400).json({
-                success: false,
-                error: 'Nederīgs repo nosaukums.'
-            });
+        if (!Number.isSafeInteger(id) || id <= 0) {
+            return res.status(400).json({ success: false, error: 'Nederīgs GitHub repo ID.' });
         }
 
         if (!normalizedWallet) {
@@ -1807,16 +1850,24 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             });
         }
 
+        const repoData = await getGitHubRepositoryById(githubToken, id);
+        if (!repoData.permissions || (!repoData.permissions.admin && !repoData.permissions.push)) {
+            return res.status(403).json({ success: false, error: 'Tev nav tiesību uz šo repozitoriju.' });
+        }
+        const fullRepoName = repoData.fullName;
+        const repoName = fullRepoName.split('/')[1];
+
         logSection('📥 PREPARE BACKUP');
-        logInfo('Repo', `${githubUser}/${repoName}`);
+        logInfo('Repo', fullRepoName);
+        logInfo('GitHub repo ID', String(id));
+        logInfo('GitHub user ID', githubUserId);
         logInfo('Wallet', normalizedWallet);
 
-        await verifySubscription(githubUser);
+        await verifySubscription(githubUserId);
 
         const provider = getProvider();
         const nftContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
-        const fullRepoName = `${githubUser}/${repoName}`;
-        const repoHash = repositoryHash(fullRepoName);
+        const repoHash = repositoryHash(id);
         const tokenId = await nftContract.repositoryTokens(repoHash);
 
         if (tokenId === 0n) {
@@ -1842,8 +1893,8 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
         ]);
 
         const archiveMetadata = await getRepoArchiveMetadata(
-            githubToken, githubUser, repoName,
-            req.body.defaultBranch || undefined
+            githubToken, repoData.ownerLogin, repoName,
+            req.body.defaultBranch || repoData.defaultBranch
         );
 
         if (archiveMetadata.blobs.length === 0) {
@@ -1949,7 +2000,7 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
         });
 
         archive = await openRepoArchive(
-            githubToken, githubUser, repoName, archiveMetadata
+            githubToken, repoData.ownerLogin, repoName, archiveMetadata
         );
 
         const jobFiles = [];
@@ -1963,7 +2014,7 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             success: true,
             jobId,
             repoName: fullRepoName,
-            githubRepositoryId: String(archive.repository.id),
+            githubRepositoryId: String(repoData.id),
             githubDefaultBranch: archive.repository.defaultBranch,
             githubCommitSha: archive.commitSha,
             githubTreeSha: archive.treeSha,
@@ -2015,9 +2066,11 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             version: 7,
             jobId,
             githubUser,
+            githubUserId,
+            githubRepositoryOwnerId: String(repoData.ownerId),
             repoName,
             fullRepoName,
-            githubRepositoryId: String(archive.repository.id),
+            githubRepositoryId: String(repoData.id),
             githubDefaultBranch: archive.repository.defaultBranch,
             githubCommitSha: archive.commitSha,
             githubTreeSha: archive.treeSha,
@@ -2053,7 +2106,7 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             success: true,
             jobId,
             repoName: fullRepoName,
-            githubRepositoryId: String(archive.repository.id),
+            githubRepositoryId: String(repoData.id),
             githubDefaultBranch: archive.repository.defaultBranch,
             githubCommitSha: archive.commitSha,
             githubTreeSha: archive.treeSha,
