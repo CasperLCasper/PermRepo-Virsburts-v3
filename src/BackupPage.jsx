@@ -527,6 +527,9 @@ function BackupPage() {
                                     setLastStatusData({ type: 'warning', key: 'unfinished-backup-warning' });
                                 } else {
                                     setStatus(t('recovery-ready'));
+                                    // Saglabā tulkojamo statusa atslēgu, lai valodas maiņa
+                                    // atjauninātu arī šo paziņojumu.
+                                    setLastStatusData({ type: 'simple', key: 'recovery-ready' });
                                 }
                                 
                                 const changedFiles = Array.isArray(jobStatus.changedFileMetadata)
@@ -1378,6 +1381,13 @@ function BackupPage() {
         }
     }
 
+    const zipAlreadyUploaded = Boolean(
+        !backupCompleted && (recoveredJobData?.zipTxId || uploadedZipRef.current.txId)
+    );
+    const manifestAlreadyUploaded = Boolean(
+        recoveredJobData?.manifestTxId || uploadedManifestRef.current.txId
+    );
+
     return (
         <div className="container">
             <div className="language-selector">
@@ -1409,7 +1419,22 @@ function BackupPage() {
                 <span className="info-value">{nftInfo.lastMerkleRoot || '-'}</span>
             </div>
             
-            {fileInfo.loading ? (
+            {zipAlreadyUploaded ? (
+                <div
+                    role="status"
+                    style={{
+                        padding: '12px',
+                        marginTop: '12px',
+                        borderRadius: '8px',
+                        background: 'rgba(240, 173, 78, 0.12)',
+                        border: '1px solid rgba(240, 173, 78, 0.35)'
+                    }}
+                >
+                    {manifestAlreadyUploaded
+                        ? t('recovery-zip-manifest-uploaded')
+                        : t('recovery-zip-only-manifest')}
+                </div>
+            ) : fileInfo.loading ? (
                 <div style={{ textAlign: 'center', padding: '20px' }}>
                     <div className="spinner"></div>
                 </div>
