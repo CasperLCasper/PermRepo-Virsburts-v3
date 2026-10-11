@@ -87,6 +87,8 @@ export const translations = {
 
         'recovery-required': 'Blockchain transakcija ir iesniegta — nepieciešams recovery',
         'recovery-ready': 'Gatavs turpināt no saglabātā stāvokļa',
+        'recovery-zip-only-manifest': 'ZIP arhīvs jau ir augšupielādēts. Atlicis augšupielādēt tikai manifestu.',
+        'recovery-zip-manifest-uploaded': 'ZIP arhīvs un manifests jau ir augšupielādēti. Atlicis pabeigt blockchain apstiprināšanu.',
         'recovery-upload-incomplete': 'Augšupielāde nav pabeigta — lūdzu, sāciet no jauna',
         'checking-blockchain-tx': 'Pārbauda blockchain transakciju...',
         'recover-backup': 'Atjaunot backup',
@@ -194,6 +196,8 @@ export const translations = {
 
         'recovery-required': 'Blockchain transaction submitted — recovery required',
         'recovery-ready': 'Ready to continue from saved state',
+        'recovery-zip-only-manifest': 'The ZIP archive has already been uploaded. Only the manifest remains to be uploaded.',
+        'recovery-zip-manifest-uploaded': 'The ZIP archive and manifest have already been uploaded. Blockchain confirmation remains.',
         'recovery-upload-incomplete': 'Upload incomplete — please start again',
         'checking-blockchain-tx': 'Checking blockchain transaction...',
         'recover-backup': 'Recover backup',
@@ -301,6 +305,8 @@ export const translations = {
 
         'recovery-required': 'Blokĉena transakcio sendita – rekupero bezonata',
         'recovery-ready': 'Preta por daŭrigi de la konservita stato',
+        'recovery-zip-only-manifest': 'La ZIP-arkivo jam estas alŝutita. Restas alŝuti nur la manifeston.',
+        'recovery-zip-manifest-uploaded': 'La ZIP-arkivo kaj manifesto jam estas alŝutitaj. Restas fini la blokĉenan konfirmon.',
         'recovery-upload-incomplete': 'Alŝuto nekompleta — bonvolu rekomenci',
         'checking-blockchain-tx': 'Kontrolante blokĉenan transakcion...',
         'recover-backup': 'Rekuperi sekurkopion',
