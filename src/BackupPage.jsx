@@ -450,6 +450,14 @@ function BackupPage() {
                                     lastMerkleRoot: jobStatus.lastMerkleRoot || null
                                 });
 
+                                // Pēc reload iepriekšējā backup numurs jāatjauno no on-chain
+                                // backupCount. Bez tā manifesta veidošana izmantoja fallback 1,
+                                // un history ieraksts varēja izkrist.
+                                const recoveredBackupCount = Number(jobStatus.backupCount);
+                                if (Number.isSafeInteger(recoveredBackupCount) && recoveredBackupCount >= 0) {
+                                    setCurrentPreviousBackupNumber(recoveredBackupCount);
+                                }
+
                                 if (jobStatus.changedFileMetadata?.length > 0) {
                                     setChangedFilesForUpload(jobStatus.changedFileMetadata);
                                 }
@@ -978,21 +986,31 @@ function BackupPage() {
                     );
 
                     if (!alreadyExists) {
-                        const prevBackupNumber = Number.isInteger(currentPreviousBackupNumber)
-                            ? currentPreviousBackupNumber
-                            : 1;
+                        // Par reload state var būt null, tāpēc izmantojam arī atjaunotos
+                        // job datus un NFT backupCount. Ja tie nav pieejami, numuru
+                        // atvasinām no history, nevis klusējot pieņemam, ka tas ir 1.
+                        const backupCountCandidate =
+                            currentPreviousBackupNumber ??
+                            recoveredJobData?.backupCount ??
+                            nftInfo.backupCount;
+                        let prevBackupNumber = Number(backupCountCandidate);
 
-                        const numberExists = history.some(
-                            entry => Number(entry?.backupNumber) === prevBackupNumber
-                        );
-
-                        if (!numberExists) {
-                            history.push({
-                                backupNumber: prevBackupNumber,
-                                manifestId: currentPreviousManifestId,
-                                url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
-                            });
+                        if (!Number.isSafeInteger(prevBackupNumber) || prevBackupNumber <= 0) {
+                            prevBackupNumber = history.reduce((maxNumber, entry) => {
+                                const number = Number(entry?.backupNumber);
+                                return Number.isSafeInteger(number) && number > maxNumber
+                                    ? number
+                                    : maxNumber;
+                            }, 0) + 1;
                         }
+
+                        // Dublēšanos pārbaudām pēc manifestId, nevis backupNumber:
+                        // jauns ID ar tādu pašu numuru nedrīkst pazust no history.
+                        history.push({
+                            backupNumber: prevBackupNumber,
+                            manifestId: currentPreviousManifestId,
+                            url: `/raw/${encodeURIComponent(currentPreviousManifestId)}`
+                        });
                     }
                 }
 
