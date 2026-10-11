@@ -181,11 +181,46 @@ function App() {
             const githubHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [BigInt(githubUserId)]));
             const subscribeTx = await subscriptionContract.connect(providerSigner).subscribe(githubHash);
             await subscribeTx.wait();
-            
+
+            // Pēc apstiprinātas transakcijas uzreiz pārbaudām abonementu caur
+            // lietotāja maka RPC. Servera RPC var īslaicīgi atpalikt, tāpēc
+            // tūlītējs /api/subscription/status pieprasījums var atgriezt false
+            // un atstāt platformas UI ar neaktīvu abonementu.
+            let confirmedSubscription = null;
+            for (let attempt = 0; attempt < 6; attempt += 1) {
+                const [isSubscribed, expiry, remainingTime] = await Promise.all([
+                    subscriptionContract.isSubscribed(githubHash),
+                    subscriptionContract.getSubscriptionExpiry(githubHash),
+                    subscriptionContract.getRemainingTime(githubHash)
+                ]);
+
+                if (isSubscribed && BigInt(remainingTime) > 0n) {
+                    confirmedSubscription = {
+                        success: true,
+                        isSubscribed: true,
+                        expiry: expiry.toString(),
+                        remainingTime: remainingTime.toString(),
+                        price: price.toString(),
+                        githubUser: githubUser,
+                        githubUserId: String(githubUserId)
+                    };
+                    break;
+                }
+
+                if (attempt < 5) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+
+            if (!confirmedSubscription) {
+                throw new Error('Abonementa transakcija ir apstiprināta, bet tā statusu vēl nevar nolasīt no blokķēdes. Lūdzu, pēc dažām sekundēm mēģini vēlreiz pārbaudīt abonementu.');
+            }
+
+            // Atjaunojam React state uzreiz — lapas manuāla pārlāde nav vajadzīga.
+            setSubscriptionStatus(confirmedSubscription);
             setStatus(t('subscription-purchased'));
             setStatusType('success');
             setLastStatusData({ type: 'subscription-purchased' });
-            await checkSubscription();
             setIsLoading(false);
         } catch (e) {
             setIsLoading(false);
@@ -195,7 +230,7 @@ function App() {
                 setError(e.message);
             }
         }
-    }, [config, githubUserId, checkSubscription, t]);
+    }, [config, githubUserId, githubUser, t]);
 
     const connectWallet = useCallback(async () => {
         if (!window.ethereum) {
