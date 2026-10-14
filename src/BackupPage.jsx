@@ -208,22 +208,34 @@ function BackupPage() {
         return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['bytes32[]'], [fileHashes]));
     }, []);
 
-    const encryptData = useCallback(async (data, keyHex) => {
+    // One user-facing Master Key; HKDF-SHA-256 derives purpose-separated subkeys.
+    // These protocol labels and salt are fixed for crypto format v1 and must match restore.js.
+    const deriveSubkeyBytes = useCallback(async (keyHex, purpose) => {
         const keyBytes = ethers.getBytes(keyHex);
-        const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
+        if (keyBytes.length !== 32) throw new Error(t('encrypted-required'));
+        const hkdfKey = await crypto.subtle.importKey('raw', keyBytes, 'HKDF', false, ['deriveBits']);
+        const bits = await crypto.subtle.deriveBits({
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt: new TextEncoder().encode('PermRepo HKDF salt v1'),
+            info: new TextEncoder().encode(`PermRepo/v1/${purpose}`)
+        }, hkdfKey, 256);
+        return new Uint8Array(bits);
+    }, [t]);
+
+    const encryptData = useCallback(async (data, keyHex) => {
+        const encryptionKeyBytes = await deriveSubkeyBytes(keyHex, 'aes-gcm');
+        const cryptoKey = await crypto.subtle.importKey('raw', encryptionKeyBytes, 'AES-GCM', false, ['encrypt']);
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, data);
         return { encrypted: new Uint8Array(encrypted), iv };
-    }, []);
+    }, [deriveSubkeyBytes]);
 
-    // Independent Master Key verifier: does not depend on any ZIP archive's integrity.
-    // The key is already a random 32-byte secret; the domain label separates this use
-    // from AES-GCM encryption and from any future HMAC use in PermRepo.
+    // Verifier key is derived independently from the AES-GCM key.
     const createMasterKeyVerifier = useCallback(async (keyHex) => {
-        const keyBytes = ethers.getBytes(keyHex);
-        if (keyBytes.length !== 32) throw new Error(t('encrypted-required'));
+        const verifierKeyBytes = await deriveSubkeyBytes(keyHex, 'key-verifier');
         const hmacKey = await crypto.subtle.importKey(
-            'raw', keyBytes,
+            'raw', verifierKeyBytes,
             { name: 'HMAC', hash: 'SHA-256' },
             false,
             ['sign']
@@ -231,7 +243,7 @@ function BackupPage() {
         const message = new TextEncoder().encode('PermRepo Master Key verifier v1');
         const signature = await crypto.subtle.sign('HMAC', hmacKey, message);
         return ethers.hexlify(new Uint8Array(signature));
-    }, [t]);
+    }, [deriveSubkeyBytes]);
 
     const promptMasterKey = useCallback(() => {
         return new Promise(resolve => {
@@ -530,6 +542,18 @@ function BackupPage() {
                                 return;
                             }
 
+                            // Testnet crypto v1 is intentionally not backward-compatible. Do not
+                            // create a new-format manifest around a ZIP uploaded by the old format.
+                            if (jobStatus.zipTxId && Number(jobStatus.cryptoVersion) !== 1 &&
+                                !jobStatus.backupTxHash && !storedBackupTx) {
+                                setRecoveredJobData({ ...jobStatus, freshStartRequired: true });
+                                setRecoveryRequired(false);
+                                setStatus(t('testnet-crypto-reset-required'));
+                                setLastStatusData({ type: 'warning', key: 'testnet-crypto-reset-required' });
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                return;
+                            }
+
                             // ✅ Ja ZIP ir — turpināt ar manifestu vai blockchain
                             if (jobStatus.zipTxId) {
                                 setPreparedJobId(jobStatus.jobId);
@@ -567,6 +591,7 @@ function BackupPage() {
                                     repositoryId: String(repositoryId),
                                     walletAddress: currentAddress,
                                     stage: jobStatus.manifestTxId ? 'manifest-uploaded' : 'zip-uploaded',
+                                    cryptoVersion: jobStatus.cryptoVersion ?? null,
                                     zipTxId: jobStatus.zipTxId,
                                     zipIv: jobStatus.zipIv || null,
                                     zipMerkleRoot: jobStatus.zipMerkleRoot || null,
@@ -644,6 +669,22 @@ function BackupPage() {
                                     setRecoveryRequired(true);
                                     setStatus(t('recovery-required'));
                                     setError(t('recovery-manifest-fetch-failed'));
+                                    setFileInfo({ count: 0, sizeText: '', loading: false });
+                                    return;
+                                }
+
+                                const hasAnyUploadedArtifact = Boolean(
+                                    jobStatus.zipTxId || jobStatus.manifestTxId || jobStatus.backupTxHash ||
+                                    storedBackupTx || recoveryJournal?.zipTxId || recoveryJournal?.manifestTxId ||
+                                    recoveryJournal?.backupTxHash
+                                );
+                                if (jobStatus.status === 'failed' && !hasAnyUploadedArtifact) {
+                                    // Redis stores file metadata, not file contents. A failed job without
+                                    // an uploaded ZIP cannot be retried from this metadata-only snapshot.
+                                    setRecoveredJobData({ ...jobStatus, freshStartRequired: true });
+                                    setRecoveryRequired(false);
+                                    setStatus(t('unfinished-backup-warning'));
+                                    setLastStatusData({ type: 'warning', key: 'unfinished-backup-warning' });
                                     setFileInfo({ count: 0, sizeText: '', loading: false });
                                     return;
                                 }
@@ -889,7 +930,26 @@ function BackupPage() {
         readRecoveryJournal, updateRecoveryJournal, clearRecoveryJournal
     ]);
 
+    const startFreshBackup = useCallback(() => {
+        // This is an explicit user action. Clear only stale job/recovery pointers, then
+        // reload so the existing initialization flow fetches the repository contents anew.
+        try {
+            localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
+            localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
+        } catch {}
+        clearRecoveryJournal();
+        uploadedZipRef.current = { txId: null, iv: null, merkleRoot: null };
+        uploadedManifestRef.current = { txId: null, manifest: null };
+        setRecoveredJobData(null);
+        setRecoveryRequired(false);
+        window.location.reload();
+    }, [repoStorageKey, clearRecoveryJournal]);
+
     const continueBackup = useCallback(async () => {
+        if (recoveredJobData?.freshStartRequired) {
+            setError(t('recovery-upload-incomplete'));
+            return;
+        }
         if (!config) {
             setError(t('config-not-loaded'));
             return;
@@ -1024,19 +1084,22 @@ function BackupPage() {
             // Saglabājam zināmo ZIP ID Redis arī atkopšanas laikā. Endpoint ir
             // idempotents, tāpēc tas droši salāgo lokālo žurnālu ar servera stāvokli.
             if (zipTxId) {
-                updateRecoveryJournal({
+                if (!updateRecoveryJournal({
                     jobId,
                     repositoryId: String(repositoryId),
                     walletAddress: userAddress,
                     stage: 'zip-uploaded-locally',
+                    cryptoVersion: 1,
                     zipTxId,
                     zipIv: iv ? Array.from(iv) : null,
                     zipMerkleRoot: merkleRoot || null
-                });
+                })) {
+                    throw new Error(t('recovery-journal-save-failed'));
+                }
                 await apiJsonWithRetry('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jobId, zipTxId, iv, merkleRoot })
+                    body: JSON.stringify({ jobId, zipTxId, iv, merkleRoot, cryptoVersion: 1 })
                 });
             } else if (!zipTxId) {
                 await apiJson('/api/start-zip-upload', {
@@ -1109,15 +1172,18 @@ function BackupPage() {
                 zipTxId = zipResult.id;
                 uploadedZipRef.current = { txId: zipTxId, iv, merkleRoot };
                 // Kritiska secība: lokālais kontrolpunkts pirms Redis pieprasījuma.
-                updateRecoveryJournal({
+                if (!updateRecoveryJournal({
                     jobId,
                     repositoryId: String(repositoryId),
                     walletAddress: userAddress,
                     stage: 'zip-uploaded-locally',
+                    cryptoVersion: 1,
                     zipTxId,
                     zipIv: iv ? Array.from(iv) : null,
                     zipMerkleRoot: merkleRoot || null
-                });
+                })) {
+                    throw new Error(t('recovery-journal-save-failed'));
+                }
 
                 await apiJsonWithRetry('/api/save-zip-tx', {
                     method: 'POST',
@@ -1126,7 +1192,8 @@ function BackupPage() {
                         jobId,
                         zipTxId,
                         iv: iv ? Array.from(iv) : null,
-                        merkleRoot: merkleRoot || null
+                        merkleRoot: merkleRoot || null,
+                        cryptoVersion: 1
                     })
                 });
             }
@@ -1220,7 +1287,7 @@ function BackupPage() {
                         repositoryName: repositoryFullName || `${githubUser}/${repoName}`, 
                         githubUserId: githubUserId ? String(githubUserId) : null
                     },
-                    encryption: { ivs: encryptionIVs, keyVerifier: masterKeyVerifier },
+                    encryption: { algorithm: 'AES-GCM', kdf: 'HKDF-SHA-256', version: 1, ivs: encryptionIVs, keyVerifier: masterKeyVerifier },
                     archive: {
                         id: zipTxId,
                         url: `/raw/${encodeURIComponent(zipTxId)}`,
@@ -1277,7 +1344,7 @@ function BackupPage() {
 
                 manifestTxId = manifestResult.id;
                 uploadedManifestRef.current = { txId: manifestTxId, manifest };
-                updateRecoveryJournal({
+                if (!updateRecoveryJournal({
                     jobId,
                     repositoryId: String(repositoryId),
                     walletAddress: userAddress,
@@ -1286,7 +1353,9 @@ function BackupPage() {
                     zipIv: iv ? Array.from(iv) : null,
                     zipMerkleRoot: merkleRoot || null,
                     manifestTxId
-                });
+                })) {
+                    throw new Error(t('recovery-journal-save-failed'));
+                }
 
                 await apiJsonWithRetry('/api/save-manifest-tx', {
                     method: 'POST',
@@ -1670,7 +1739,16 @@ function BackupPage() {
                 </>
             )}
             
-            {recoveryRequired && !recoveredJobData?.serverJobMissing && (recoveredJobData?.backupTxHash || localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`)) ? (
+            {recoveredJobData?.freshStartRequired ? (
+                <button
+                    onClick={startFreshBackup}
+                    disabled={isWorking}
+                    className="sign-button"
+                    style={{ marginTop: '20px' }}
+                >
+                    {t('start-new-backup')}
+                </button>
+            ) : recoveryRequired && !recoveredJobData?.serverJobMissing && (recoveredJobData?.backupTxHash || localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`)) ? (
                 <button 
                     onClick={recoverBackup}
                     disabled={isWorking}
