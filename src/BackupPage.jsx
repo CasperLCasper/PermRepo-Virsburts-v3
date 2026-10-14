@@ -131,6 +131,60 @@ function BackupPage() {
         return result;
     }, [t]);
 
+    // Vienkāršs lokāls atkopšanas žurnāls: glabā tikai mazos kontrolpunktus,
+    // nevis failu saturu vai pilnu manifestu.
+    const recoveryJournalStorageKey = `permrepo-recovery-${repoStorageKey}`;
+
+    const readRecoveryJournal = useCallback(() => {
+        try {
+            const raw = localStorage.getItem(recoveryJournalStorageKey);
+            if (!raw) return null;
+            const value = JSON.parse(raw);
+            return value && typeof value === 'object' && !Array.isArray(value)
+                ? value
+                : null;
+        } catch {
+            return null;
+        }
+    }, [recoveryJournalStorageKey]);
+
+    const updateRecoveryJournal = useCallback((patch) => {
+        try {
+            const previous = readRecoveryJournal() || {};
+            const next = {
+                ...previous,
+                ...patch,
+                updatedAt: Date.now()
+            };
+            localStorage.setItem(recoveryJournalStorageKey, JSON.stringify(next));
+            return true;
+        } catch (storageError) {
+            console.warn('Neizdevās saglabāt lokālo atkopšanas kontrolpunktu:', storageError);
+            return false;
+        }
+    }, [readRecoveryJournal, recoveryJournalStorageKey]);
+
+    const clearRecoveryJournal = useCallback(() => {
+        try { localStorage.removeItem(recoveryJournalStorageKey); } catch {}
+    }, [recoveryJournalStorageKey]);
+
+    // Redis kļūmes gadījumā mēģina atkārtoti tikai īslaicīgas/servera kļūmes.
+    // Lokālais kontrolpunkts jau ir saglabāts pirms šīs funkcijas izsaukšanas.
+    const apiJsonWithRetry = useCallback(async (url, options = {}, attempts = 3) => {
+        let lastError;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+            try {
+                return await apiJson(url, options);
+            } catch (err) {
+                lastError = err;
+                const retryable = !err.status || err.status >= 500;
+                if (!retryable || attempt === attempts - 1) throw err;
+                await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+            }
+        }
+        throw lastError || new Error(t('unknown-error'));
+    }, [apiJson, t]);
+
     const formatFileSize = useCallback((bytes) => {
         const value = Number(bytes || 0);
         if (value < 1024) return `${value} B`;
@@ -376,8 +430,9 @@ function BackupPage() {
                 }
 
                 // ✅ Recovery no localStorage
-                const storedJobId = localStorage.getItem(`permrepo-job-${repoStorageKey}`);
-                const storedBackupTx = localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`);
+                const recoveryJournal = readRecoveryJournal();
+                const storedJobId = localStorage.getItem(`permrepo-job-${repoStorageKey}`) || recoveryJournal?.jobId || null;
+                const storedBackupTx = localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`) || recoveryJournal?.backupTxHash || null;
                 let shouldStartNewBackup = !storedJobId;
 
                 if (storedJobId) {
@@ -385,6 +440,22 @@ function BackupPage() {
                         const jobStatus = await apiJson(`/api/job-status?jobId=${encodeURIComponent(storedJobId)}`);
 
                         if (jobStatus.success) {
+                            // Redis ir darba stāvokļa reģistrs; lokālais žurnāls var saturēt
+                            // ID, kuru Turbo jau atdeva, bet Redis ieraksts vēl nav izdevies.
+                            if (recoveryJournal) {
+                                if (!jobStatus.zipTxId && recoveryJournal.zipTxId) {
+                                    jobStatus.zipTxId = recoveryJournal.zipTxId;
+                                    jobStatus.zipIv = recoveryJournal.zipIv || null;
+                                    jobStatus.zipMerkleRoot = recoveryJournal.zipMerkleRoot || null;
+                                }
+                                if (!jobStatus.manifestTxId && recoveryJournal.manifestTxId) {
+                                    jobStatus.manifestTxId = recoveryJournal.manifestTxId;
+                                }
+                                if (!jobStatus.backupTxHash && recoveryJournal.backupTxHash) {
+                                    jobStatus.backupTxHash = recoveryJournal.backupTxHash;
+                                }
+                            }
+
                             // ✅ Ja jau completed — atjaunot nftInfo
                             if (jobStatus.status === 'completed') {
                                 setNftInfo({
@@ -399,6 +470,7 @@ function BackupPage() {
                                 setFileInfo({ count: 0, sizeText: '', loading: false });
                                 localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
                                 localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
+                                clearRecoveryJournal();
                                 return;
                             }
 
@@ -431,6 +503,7 @@ function BackupPage() {
                                     setStatus(t('backup-complete'));
                                     localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
                                     localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
+                                    clearRecoveryJournal();
                                     return;
                                 } catch (recoveryError) {
                                     setRecoveryRequired(true);
@@ -489,6 +562,17 @@ function BackupPage() {
                                     iv: jobStatus.zipIv || null,
                                     merkleRoot: jobStatus.zipMerkleRoot || null
                                 };
+                                updateRecoveryJournal({
+                                    jobId: jobStatus.jobId,
+                                    repositoryId: String(repositoryId),
+                                    walletAddress: currentAddress,
+                                    stage: jobStatus.manifestTxId ? 'manifest-uploaded' : 'zip-uploaded',
+                                    zipTxId: jobStatus.zipTxId,
+                                    zipIv: jobStatus.zipIv || null,
+                                    zipMerkleRoot: jobStatus.zipMerkleRoot || null,
+                                    manifestTxId: jobStatus.manifestTxId || null,
+                                    backupTxHash: jobStatus.backupTxHash || null
+                                });
 
                                 if (jobStatus.lastManifest?.startsWith('ar://')) {
                                     const prevManifestId = jobStatus.lastManifest.slice(5);
@@ -537,6 +621,33 @@ function BackupPage() {
                                     }
                                 }
 
+                                // Ja manifesta ID jau ir lokāli vai Redis, bet lapa tika
+                                // pārlādēta, manifesta JSON atgūst no publiskā Arweave gateway.
+                                if (jobStatus.manifestTxId && !jobStatus.manifest) {
+                                    try {
+                                        const savedManifestUrl = getValidatedManifestUrl(
+                                            configData.arweaveGateway,
+                                            jobStatus.manifestTxId,
+                                            t
+                                        );
+                                        const savedManifestResponse = await fetch(savedManifestUrl, { cache: 'no-store' });
+                                        if (savedManifestResponse.ok) {
+                                            jobStatus.manifest = await savedManifestResponse.json();
+                                        }
+                                    } catch (manifestRecoveryError) {
+                                        console.warn('Neizdevās atgūt augšupielādēto manifestu:', manifestRecoveryError);
+                                    }
+                                }
+
+                                if (jobStatus.manifestTxId && !jobStatus.manifest) {
+                                    setRecoveredJobData(jobStatus);
+                                    setRecoveryRequired(true);
+                                    setStatus(t('recovery-required'));
+                                    setError(t('recovery-manifest-fetch-failed'));
+                                    setFileInfo({ count: 0, sizeText: '', loading: false });
+                                    return;
+                                }
+
                                 setRecoveredJobData(jobStatus);
 
                                 if (jobStatus.status === 'failed') {
@@ -565,12 +676,30 @@ function BackupPage() {
 
                             localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
                             localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
+                            clearRecoveryJournal();
                             shouldStartNewBackup = true;
                         }
                     } catch (recoveryError) {
                         if (recoveryError.status === 404) {
+                            const journalHasUploadedData = Boolean(
+                                recoveryJournal?.zipTxId ||
+                                recoveryJournal?.manifestTxId ||
+                                recoveryJournal?.backupTxHash ||
+                                storedBackupTx
+                            );
+                            if (journalHasUploadedData) {
+                                // Nedzēšam vienīgos atlikušos pierādījumus. Bez Redis darba
+                                // ieraksta nevar droši turpināt automātiski.
+                                setRecoveredJobData({ ...recoveryJournal, jobId: storedJobId, serverJobMissing: true });
+                                setRecoveryRequired(true);
+                                setStatus(t('recovery-required'));
+                                setError(t('recovery-server-job-missing'));
+                                setFileInfo({ count: 0, sizeText: '', loading: false });
+                                return;
+                            }
                             localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
                             localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
+                            clearRecoveryJournal();
                             shouldStartNewBackup = true;
                         } else {
                             console.error('Neizdevās pārbaudīt backup job:', recoveryError);
@@ -655,6 +784,12 @@ function BackupPage() {
                                             parsed.jobId
                                         );
                                     } catch {}
+                                    updateRecoveryJournal({
+                                        jobId: parsed.jobId,
+                                        repositoryId: String(repositoryId),
+                                        walletAddress: currentAddress,
+                                        stage: 'prepared'
+                                    });
                                     break;
                                 case 'file':
                                     files.push(parsed.file);
@@ -749,7 +884,10 @@ function BackupPage() {
                 reader.cancel().catch(() => {});
             }
         };
-    }, [apiJson, repoName, t, formatFileSize]);
+    }, [
+        apiJson, repoName, t, formatFileSize, repositoryId, repoStorageKey,
+        readRecoveryJournal, updateRecoveryJournal, clearRecoveryJournal
+    ]);
 
     const continueBackup = useCallback(async () => {
         if (!config) {
@@ -883,15 +1021,19 @@ function BackupPage() {
             let iv = uploadedZipRef.current.iv;
             let merkleRoot = uploadedZipRef.current.merkleRoot;
 
-            // ✅ #5 LABOJUMS: ja recovered job jau satur manifestu, neizsaucam save-zip-tx
-            // (ZIP jau ir saglabāts, un serverim jāveic failed → manifest-uploaded)
-            const hasRecoveredManifest = Boolean(
-                recoveredJobData?.manifestTxId &&
-                recoveredJobData?.manifest
-            );
-
-            if (zipTxId && !hasRecoveredManifest) {
-                await apiJson('/api/save-zip-tx', {
+            // Saglabājam zināmo ZIP ID Redis arī atkopšanas laikā. Endpoint ir
+            // idempotents, tāpēc tas droši salāgo lokālo žurnālu ar servera stāvokli.
+            if (zipTxId) {
+                updateRecoveryJournal({
+                    jobId,
+                    repositoryId: String(repositoryId),
+                    walletAddress: userAddress,
+                    stage: 'zip-uploaded-locally',
+                    zipTxId,
+                    zipIv: iv ? Array.from(iv) : null,
+                    zipMerkleRoot: merkleRoot || null
+                });
+                await apiJsonWithRetry('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jobId, zipTxId, iv, merkleRoot })
@@ -966,8 +1108,18 @@ function BackupPage() {
 
                 zipTxId = zipResult.id;
                 uploadedZipRef.current = { txId: zipTxId, iv, merkleRoot };
+                // Kritiska secība: lokālais kontrolpunkts pirms Redis pieprasījuma.
+                updateRecoveryJournal({
+                    jobId,
+                    repositoryId: String(repositoryId),
+                    walletAddress: userAddress,
+                    stage: 'zip-uploaded-locally',
+                    zipTxId,
+                    zipIv: iv ? Array.from(iv) : null,
+                    zipMerkleRoot: merkleRoot || null
+                });
 
-                await apiJson('/api/save-zip-tx', {
+                await apiJsonWithRetry('/api/save-zip-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -987,13 +1139,24 @@ function BackupPage() {
 
             if (manifestTxId && recoveredJobData?.manifest) {
                 manifest = recoveredJobData.manifest;
-                await apiJson('/api/save-manifest-tx', {
+                updateRecoveryJournal({
+                    jobId,
+                    repositoryId: String(repositoryId),
+                    walletAddress: userAddress,
+                    stage: 'manifest-uploaded-locally',
+                    zipTxId,
+                    zipIv: iv ? Array.from(iv) : null,
+                    zipMerkleRoot: merkleRoot || null,
+                    manifestTxId
+                });
+                await apiJsonWithRetry('/api/save-manifest-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jobId, manifestTxId, manifest })
                 });
+                updateRecoveryJournal({ stage: 'manifest-uploaded', manifestTxId });
             } else if (!manifestTxId) {
-                await apiJson('/api/start-manifest-upload', {
+                await apiJsonWithRetry('/api/start-manifest-upload', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jobId })
@@ -1114,12 +1277,23 @@ function BackupPage() {
 
                 manifestTxId = manifestResult.id;
                 uploadedManifestRef.current = { txId: manifestTxId, manifest };
+                updateRecoveryJournal({
+                    jobId,
+                    repositoryId: String(repositoryId),
+                    walletAddress: userAddress,
+                    stage: 'manifest-uploaded-locally',
+                    zipTxId,
+                    zipIv: iv ? Array.from(iv) : null,
+                    zipMerkleRoot: merkleRoot || null,
+                    manifestTxId
+                });
 
-                await apiJson('/api/save-manifest-tx', {
+                await apiJsonWithRetry('/api/save-manifest-tx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jobId, manifestTxId, manifest })
                 });
+                updateRecoveryJournal({ stage: 'manifest-uploaded', manifestTxId });
             }
 
             setStatus(t('signing'));
@@ -1190,6 +1364,17 @@ function BackupPage() {
             });
 
             const nftWrite = new ethers.Contract(config.nftAddress, NFT_ABI, currentSigner);
+            updateRecoveryJournal({
+                jobId,
+                repositoryId: String(repositoryId),
+                walletAddress: userAddress,
+                stage: 'blockchain-submitting',
+                zipTxId,
+                manifestTxId,
+                tokenId: String(nftInfo.tokenId),
+                manifestURI,
+                merkleRoot
+            });
 
             const tx = await nftWrite.addBackup(
                 tokenId,
@@ -1207,8 +1392,20 @@ function BackupPage() {
                     tx.hash
                 );
             } catch {}
+            updateRecoveryJournal({
+                jobId,
+                repositoryId: String(repositoryId),
+                walletAddress: userAddress,
+                stage: 'blockchain-finalizing',
+                zipTxId,
+                manifestTxId,
+                backupTxHash: tx.hash,
+                tokenId: String(nftInfo.tokenId),
+                manifestURI,
+                merkleRoot
+            });
 
-            await apiJson('/api/save-backup-tx', {
+            await apiJsonWithRetry('/api/save-backup-tx', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1254,6 +1451,7 @@ function BackupPage() {
             try {
                 localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
                 localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
+                clearRecoveryJournal();
             } catch {}
 
             setNftInfo({
@@ -1320,11 +1518,11 @@ function BackupPage() {
             setIsWorking(false);
         }
     }, [
-        apiJson, t, githubUser, repoName, config,
+        apiJson, apiJsonWithRetry, updateRecoveryJournal, t, githubUser, repoName, config,
         currentPreviousHistory, currentPreviousManifestId,
         currentPreviousBackupNumber, currentPreviousEncryptionIVs,
         nftInfo.tokenId, calculateMerkleRoot, encryptData,
-        userAddress, recoveredJobData
+        userAddress, recoveredJobData, repositoryId
     ]);
 
     const recoverBackup = useCallback(async () => {
@@ -1352,6 +1550,7 @@ function BackupPage() {
             try {
                 localStorage.removeItem(`permrepo-job-${repoStorageKey}`);
                 localStorage.removeItem(`permrepo-backup-tx-${repoStorageKey}`);
+                clearRecoveryJournal();
             } catch {}
 
             if (recoveredJobData) {
@@ -1372,7 +1571,7 @@ function BackupPage() {
             setError(getSafeErrorMessage(e, t));
             setIsWorking(false);
         }
-    }, [recoveredJobData, preparedJobId, apiJson, t, repoName, nftInfo, lastManifestTxId]);
+    }, [recoveredJobData, preparedJobId, apiJson, t, repoName, nftInfo, lastManifestTxId, clearRecoveryJournal]);
 
     if (!config) {
         return (
@@ -1471,7 +1670,7 @@ function BackupPage() {
                 </>
             )}
             
-            {recoveryRequired && (recoveredJobData?.backupTxHash || localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`)) ? (
+            {recoveryRequired && !recoveredJobData?.serverJobMissing && (recoveredJobData?.backupTxHash || localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`)) ? (
                 <button 
                     onClick={recoverBackup}
                     disabled={isWorking}
@@ -1489,7 +1688,12 @@ function BackupPage() {
             ) : !backupCompleted ? (
                 <button 
                     onClick={continueBackup}
-                    disabled={isWorking || fileInfo.loading || (fileInfo.count === 0 && !recoveredJobData)}
+                    disabled={
+                        isWorking ||
+                        fileInfo.loading ||
+                        (fileInfo.count === 0 && !recoveredJobData) ||
+                        (recoveryRequired && (recoveredJobData?.serverJobMissing || !(recoveredJobData?.backupTxHash || localStorage.getItem(`permrepo-backup-tx-${repoStorageKey}`))))
+                    }
                     className="sign-button"
                     style={{ marginTop: '20px' }}
                 >
