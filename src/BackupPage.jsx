@@ -162,6 +162,23 @@ function BackupPage() {
         return { encrypted: new Uint8Array(encrypted), iv };
     }, []);
 
+    // Independent Master Key verifier: does not depend on any ZIP archive's integrity.
+    // The key is already a random 32-byte secret; the domain label separates this use
+    // from AES-GCM encryption and from any future HMAC use in PermRepo.
+    const createMasterKeyVerifier = useCallback(async (keyHex) => {
+        const keyBytes = ethers.getBytes(keyHex);
+        if (keyBytes.length !== 32) throw new Error(t('encrypted-required'));
+        const hmacKey = await crypto.subtle.importKey(
+            'raw', keyBytes,
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const message = new TextEncoder().encode('PermRepo Master Key verifier v1');
+        const signature = await crypto.subtle.sign('HMAC', hmacKey, message);
+        return ethers.hexlify(new Uint8Array(signature));
+    }, [t]);
+
     const promptMasterKey = useCallback(() => {
         return new Promise(resolve => {
             const overlay = document.createElement('div');
@@ -841,7 +858,8 @@ function BackupPage() {
     }, [
         config, userAddress, nftInfo.backupCount, repoName, t,
         changedFilesForUpload, unchangedFilesForUpload, preparedJobId,
-        showMasterKey, promptMasterKey, isValidMasterKey, recoveredJobData
+        showMasterKey, promptMasterKey, isValidMasterKey, recoveredJobData,
+        createMasterKeyVerifier
     ]);
 
     const uploadZip = useCallback(async (
@@ -1028,6 +1046,8 @@ function BackupPage() {
                     encryptionIVs[zipTxId] = Array.from(iv);
                 }
 
+                const masterKeyVerifier = await createMasterKeyVerifier(keyHex);
+
                 manifest = {
                     manifest: 'arweave/paths',
                     version: '0.2.0',
@@ -1037,7 +1057,7 @@ function BackupPage() {
                         repositoryName: repositoryFullName || `${githubUser}/${repoName}`, 
                         githubUserId: githubUserId ? String(githubUserId) : null
                     },
-                    encryption: { ivs: encryptionIVs },
+                    encryption: { ivs: encryptionIVs, keyVerifier: masterKeyVerifier },
                     archive: {
                         id: zipTxId,
                         url: `/raw/${encodeURIComponent(zipTxId)}`,
