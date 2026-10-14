@@ -72,7 +72,7 @@ const RESOURCE_QUEUE_HEARTBEAT_MS = Number(
     process.env.RESOURCE_QUEUE_HEARTBEAT_MS || 15000
 );
 
-const JOB_TTL_SECONDS = Number(process.env.JOB_TTL_SECONDS || 7200);
+const JOB_TTL_SECONDS = Number(process.env.JOB_TTL_SECONDS || 86400);
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 3600);
 const LOCK_HEARTBEAT_MS = Number(process.env.LOCK_HEARTBEAT_MS || 60000);
 const DOWNLOAD_CONCURRENCY = 3;
@@ -2400,16 +2400,28 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                 );
             }
 
-            // ✅ #1 LABOJUMS: Recovery no failed → zip-uploaded
-            // Ja ZIP jau ir saglabāts, bet statuss ir failed (piemēram, manifests neizdevās)
-            // Atjaunot statusu uz zip-uploaded, lai varētu turpināt
-            if (job.status === 'failed' && job.zipTxId === zipTxId) {
+            // Atkopšana, ja Turbo atdeva ZIP ID, bet Redis ieraksts neizdevās.
+            // Atļaujam to tikai tad, ja šim job iepriekš tiešām sākta ZIP augšupielāde.
+            if (
+                job.status === 'failed' &&
+                job.zipUploadStartedAt &&
+                (!job.zipTxId || job.zipTxId === zipTxId)
+            ) {
+                const recoveredStatus = job.manifestTxId
+                    ? 'manifest-uploaded'
+                    : job.manifestUploadStartedAt
+                        ? 'manifest-uploading'
+                        : 'zip-uploaded';
                 await updateJob(jobId, {
-                    status: 'zip-uploaded',
+                    zipTxId,
+                    zipIv: normalizedIV,
+                    zipMerkleRoot: normalizedMerkleRoot,
+                    status: recoveredStatus,
                     error: null,
                     failedAt: null,
                     recoveredFromFailed: true,
                     recoveredAt: Date.now(),
+                    zipUploadedAt: job.zipUploadedAt || Date.now(),
                     updatedAt: Date.now()
                 }, JOB_TTL_SECONDS);
 
@@ -2420,7 +2432,7 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                 return res.json({
                     success: true,
                     recovered: true,
-                    status: 'zip-uploaded'
+                    status: recoveredStatus
                 });
             }
 
@@ -2551,13 +2563,24 @@ app.post('/api/save-manifest-tx', backupLimiter, async (req, res) => {
             // ✅ #2 LABOJUMS: Recovery no failed → manifest-uploaded
             // Ja manifests jau ir saglabāts, bet statuss ir failed
             // Atjaunot statusu uz manifest-uploaded, lai varētu turpināt
-            if (job.status === 'failed' && job.manifestTxId === manifestTxId) {
+            if (
+                job.status === 'failed' &&
+                job.manifestUploadStartedAt &&
+                (!job.manifestTxId || job.manifestTxId === manifestTxId)
+            ) {
+                if (manifest.archive?.id !== job.zipTxId) {
+                    throw new Error('Manifesta archive ID nesakrīt ar ZIP transakciju.');
+                }
+
                 await updateJob(jobId, {
+                    manifestTxId,
+                    manifest,
                     status: 'manifest-uploaded',
                     error: null,
                     failedAt: null,
                     recoveredFromFailed: true,
                     recoveredAt: Date.now(),
+                    manifestUploadedAt: Date.now(),
                     updatedAt: Date.now()
                 }, JOB_TTL_SECONDS);
 
