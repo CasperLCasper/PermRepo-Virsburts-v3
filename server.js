@@ -2083,6 +2083,7 @@ app.post('/api/prepare-backup', backupLimiter, async (req, res) => {
             changedFileMetadata,
             unchangedFiles,
             status: 'prepared',
+            cryptoVersion: 1,
             zipTxId: null,
             zipIv: null,
             zipMerkleRoot: null,
@@ -2242,6 +2243,7 @@ app.get('/api/job-status', async (req, res) => {
             tokenId: job.tokenId,
             walletAddress: job.walletAddress,
             zipTxId: job.zipTxId || null,
+            cryptoVersion: job.cryptoVersion == null ? null : Number(job.cryptoVersion),
             zipIv: job.zipIv || null,
             zipMerkleRoot: job.zipMerkleRoot || null,
             manifestTxId: job.manifestTxId || null,
@@ -2328,9 +2330,15 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
         assertSameOrigin(req);
         if (!requireGithubSession(req, res)) return;
 
-        const { jobId, zipTxId, iv, merkleRoot } = req.body;
+        const { jobId, zipTxId, iv, merkleRoot, cryptoVersion } = req.body;
 
         validateJobTxInput(jobId, zipTxId);
+        if (cryptoVersion !== 1) {
+            return res.status(400).json({
+                success: false,
+                error: 'Neatbalstīta ZIP šifrēšanas versija. Atjaunini backup platformu.'
+            });
+        }
 
         // ✅ #2 LABOJUMS: Stingrāka IV validācija
         // IV validācija (ja padots)
@@ -2389,6 +2397,9 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                 job.status === 'completed'
             ) {
                 if (job.zipTxId === zipTxId) {
+                    if (Number(job.cryptoVersion) !== 1) {
+                        throw new Error('Šis ZIP izmanto veco testnet šifrēšanas formātu; izveido jaunu backup.');
+                    }
                     return res.json({
                         success: true,
                         idempotent: true,
@@ -2414,6 +2425,7 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                         : 'zip-uploaded';
                 await updateJob(jobId, {
                     zipTxId,
+                    cryptoVersion: 1,
                     zipIv: normalizedIV,
                     zipMerkleRoot: normalizedMerkleRoot,
                     status: recoveredStatus,
@@ -2444,6 +2456,7 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
 
             await updateJob(jobId, {
                 zipTxId,
+                cryptoVersion: 1,
                 zipIv: normalizedIV,
                 zipMerkleRoot: normalizedMerkleRoot,
                 status: 'zip-uploaded',
