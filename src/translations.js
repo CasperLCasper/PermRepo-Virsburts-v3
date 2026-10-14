@@ -86,6 +86,8 @@ export const translations = {
         'invalid-gateway-host': 'Nederīgs gateway hosts',
 
         'recovery-required': 'Blockchain transakcija ir iesniegta — nepieciešams recovery',
+        'recovery-journal-save-failed': 'Neizdevās saglabāt lokālo atkopšanas kontrolpunktu. Augšupielāde apturēta, lai neriskētu ar nekontrolētu turpinājumu.',
+        'testnet-crypto-reset-required': 'Šis nepabeigtais ZIP izmanto veco testnet šifrēšanas formātu. Sāc jaunu backup ar pašreizējo versiju.',
         'recovery-server-job-missing': 'Atkopšanas dati ir saglabāti pārlūkā, bet servera darba ieraksts nav pieejams. Automātiska turpināšana apturēta, lai neradītu dublētu backup. Saglabā atkopšanas datus un sazinies ar atbalstu.',
         'recovery-manifest-fetch-failed': 'Manifests jau ir augšupielādēts, bet to pašlaik neizdevās nolasīt no Arweave. Atjaunošana apturēta; mēģini vēlreiz vēlāk.',
         'recovery-ready': 'Gatavs turpināt no saglabātā stāvokļa',
@@ -197,6 +199,8 @@ export const translations = {
         'invalid-gateway-host': 'Invalid gateway host',
 
         'recovery-required': 'Blockchain transaction submitted — recovery required',
+        'recovery-journal-save-failed': 'Could not save the local recovery checkpoint. Upload stopped to avoid an unsafe continuation.',
+        'testnet-crypto-reset-required': 'This unfinished ZIP uses the old testnet encryption format. Start a new backup with the current version.',
         'recovery-server-job-missing': 'Recovery data is saved in this browser, but the server job record is unavailable. Automatic continuation is paused to avoid creating a duplicate backup. Preserve the recovery data and contact support.',
         'recovery-manifest-fetch-failed': 'The manifest was uploaded, but it could not be read from Arweave right now. Recovery is paused; try again later.',
         'recovery-ready': 'Ready to continue from saved state',
@@ -308,6 +312,8 @@ export const translations = {
         'invalid-gateway-host': 'Nevalida pordego gastiganto',
 
         'recovery-required': 'Blokĉena transakcio sendita – rekupero bezonata',
+        'recovery-journal-save-failed': 'Ne eblis konservi la lokan reakiran kontrolpunkton. La alŝuto haltis por eviti nesekuran daŭrigon.',
+        'testnet-crypto-reset-required': 'Ĉi tiu nefinita ZIP uzas la malnovan testretan ĉifran formaton. Komencu novan sekurkopion per la nuna versio.',
         'recovery-server-job-missing': 'Rekuperaj datumoj estas konservitaj en ĉi tiu retumilo, sed la servila tasko ne disponeblas. Aŭtomata daŭrigo estas haltigita por eviti duoblan sekurkopion. Konservu la rekuperajn datumojn kaj kontaktu subtenon.',
         'recovery-manifest-fetch-failed': 'La manifesto jam estas alŝutita, sed ĝi ne povis esti legita de Arweave nun. Rekupero estas haltigita; provu denove poste.',
         'recovery-ready': 'Preta por daŭrigi de la konservita stato',
