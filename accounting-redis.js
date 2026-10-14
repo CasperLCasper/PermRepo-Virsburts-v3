@@ -9,7 +9,7 @@ import crypto from 'crypto';
 
 let redis = null;
 
-const DEFAULT_JOB_TTL = Number(process.env.JOB_TTL_SECONDS || 7200);
+const DEFAULT_JOB_TTL = Number(process.env.JOB_TTL_SECONDS || 86400);
 const JOB_LOCK_TTL = Number(process.env.JOB_LOCK_TTL_SECONDS || 600);
 
 function jobKey(jobId) {
@@ -37,7 +37,7 @@ const VALID_JOB_STATUSES = [
 
 // ✅ Pilns state machine
 // ✅ #1 LABOJUMS: failed → zip-uploaded un failed → manifest-uploaded
-// (recovery no failed ar jau saglabātu ZIP/manifestu)
+// (recovery pēc pārtraukta ZIP/manifesta ieraksta)
 const VALID_TRANSITIONS = {
     'prepared': ['zip-uploading', 'failed'],
     'zip-uploading': ['zip-uploaded', 'failed'],
@@ -49,6 +49,7 @@ const VALID_TRANSITIONS = {
     'failed': [
         'prepared',
         'zip-uploaded',
+        'manifest-uploading',
         'manifest-uploaded'
     ]
 };
