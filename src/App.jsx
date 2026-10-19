@@ -615,7 +615,7 @@ function App() {
             )}
             
             {!githubUser && (
-                <div style={{ display: 'block', marginBottom: '16px' }}>
+                <div style={{ display: 'block', marginBottom: '20px' }}>
                     <button 
                         onClick={() => window.location.href = '/api/github/login'}
                         className="sign-button"
