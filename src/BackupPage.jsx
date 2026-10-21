@@ -112,6 +112,7 @@ function BackupPage() {
     const uploadedZipRef = useRef({ txId: null, iv: null, merkleRoot: null });
     const uploadedManifestRef = useRef({ txId: null, manifest: null });
     const submittedBackupTxHashRef = useRef(null);
+    const previousManifestRef = useRef(null);
 
     const apiJson = useCallback(async (url, options = {}) => {
         const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -599,6 +600,7 @@ function BackupPage() {
                                     backupTxHash: jobStatus.backupTxHash || null
                                 });
 
+                                previousManifestRef.current = null;
                                 if (jobStatus.lastManifest?.startsWith('ar://')) {
                                     const prevManifestId = jobStatus.lastManifest.slice(5);
                                     
@@ -615,6 +617,7 @@ function BackupPage() {
                                             
                                             if (manifestResponse.ok) {
                                                 const prevManifest = await manifestResponse.json();
+                                                previousManifestRef.current = prevManifest;
                                                 
                                                 if (Array.isArray(prevManifest?.history)) {
                                                     setCurrentPreviousHistory(prevManifest.history);
@@ -678,9 +681,9 @@ function BackupPage() {
                                     storedBackupTx || recoveryJournal?.zipTxId || recoveryJournal?.manifestTxId ||
                                     recoveryJournal?.backupTxHash
                                 );
-                                if (jobStatus.status === 'failed' && !hasAnyUploadedArtifact) {
-                                    // Redis stores file metadata, not file contents. A failed job without
-                                    // an uploaded ZIP cannot be retried from this metadata-only snapshot.
+                                if (['failed', 'prepared', 'zip-uploading'].includes(jobStatus.status) && !hasAnyUploadedArtifact) {
+                                    // Redis stores file metadata, not file contents. These states cannot
+                                    // resume a ZIP upload after reload unless a ZIP ID was persisted.
                                     setRecoveredJobData({ ...jobStatus, freshStartRequired: true });
                                     setRecoveryRequired(false);
                                     setStatus(t('unfinished-backup-warning'));
@@ -859,6 +862,7 @@ function BackupPage() {
                     let previousHistory = [];
                     let previousEncryptionIVs = Object.create(null);
 
+                    previousManifestRef.current = null;
                     if (metadata.lastManifest && metadata.lastManifest.startsWith('ar://')) {
                         const prevManifestId = metadata.lastManifest.slice(5);
                         if (!isValidManifestId(prevManifestId)) {
@@ -872,6 +876,7 @@ function BackupPage() {
                         if (!manifestResponse.ok) throw new Error(t('manifest-load-failed'));
 
                         const prevManifest = await manifestResponse.json();
+                        previousManifestRef.current = prevManifest;
                         if (prevManifest && typeof prevManifest.paths === 'object' && !Array.isArray(prevManifest.paths)) {
                             previousPaths = Object.assign(Object.create(null), prevManifest.paths);
                             setCurrentUnchangedFiles(previousPaths);
@@ -1032,6 +1037,21 @@ function BackupPage() {
                     setError(t('encrypted-required'));
                     setIsWorking(false);
                     return;
+                }
+
+                // A new manifest must never relabel older ZIPs as encrypted by a different
+                // Master Key. Verify the candidate against the previous manifest first.
+                if (Number(backupCount) > 0) {
+                    const previousVerifier = previousManifestRef.current?.encryption?.keyVerifier;
+                    if (typeof previousVerifier !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(previousVerifier)) {
+                        throw new Error(t('previous-key-verifier-missing'));
+                    }
+                    const enteredVerifier = await createMasterKeyVerifier(keyHex);
+                    if (enteredVerifier.toLowerCase() !== previousVerifier.toLowerCase()) {
+                        setError(t('master-key-mismatch'));
+                        setIsWorking(false);
+                        return;
+                    }
                 }
                 masterKeyRef.current = keyHex;
             }
