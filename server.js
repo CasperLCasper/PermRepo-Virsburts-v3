@@ -1305,45 +1305,71 @@ function validateManifest(manifest) {
     if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
         throw new Error('Manifests nav derīgs objekts.');
     }
-
     const serialized = JSON.stringify(manifest);
-
     if (Buffer.byteLength(serialized, 'utf8') > MAX_MANIFEST_BYTES) {
         throw new Error('Manifests pārsniedz maksimālo izmēru.');
     }
-
     if (manifest.manifest !== 'arweave/paths') {
         throw new Error('Nederīgs manifesta tips.');
     }
-
     if (manifest.version !== '0.2.0') {
         throw new Error('Nederīga manifesta versija.');
     }
-
-    if (!manifest.paths || typeof manifest.paths !== 'object' || Array.isArray(manifest.paths)) {
-        throw new Error('Manifesta paths nav derīgs objekts.');
+    if (!manifest.metadata || typeof manifest.metadata !== 'object' || Array.isArray(manifest.metadata)) {
+        throw new Error('Manifesta metadata nav derīgi.');
+    }
+    const repositoryId = manifest.metadata.repositoryId;
+    if ((typeof repositoryId !== 'string' && typeof repositoryId !== 'number') ||
+        !/^\d+$/.test(String(repositoryId)) || BigInt(repositoryId) <= 0n) {
+        throw new Error('Manifesta repositoryId nav derīgs.');
+    }
+    if (!manifest.paths || typeof manifest.paths !== 'object' || Array.isArray(manifest.paths) ||
+        Object.keys(manifest.paths).length === 0) {
+        throw new Error('Manifesta paths nav derīgs vai ir tukšs.');
     }
 
+    const encryption = manifest.encryption;
+    if (!encryption || typeof encryption !== 'object' || Array.isArray(encryption) ||
+        encryption.algorithm !== 'AES-GCM' || encryption.kdf !== 'HKDF-SHA-256' ||
+        encryption.version !== 1 || typeof encryption.keyVerifier !== 'string' ||
+        !/^0x[0-9a-fA-F]{64}$/.test(encryption.keyVerifier) ||
+        !encryption.ivs || typeof encryption.ivs !== 'object' || Array.isArray(encryption.ivs)) {
+        throw new Error('Manifesta šifrēšanas parametri nav derīgi.');
+    }
+
+    const referencedZipIds = new Set();
     for (const [filePath, info] of Object.entries(manifest.paths)) {
-        if (typeof filePath !== 'string' || filePath.length < 1 || filePath.length > 1000) {
+        if (typeof filePath !== 'string' || filePath.length < 1 || filePath.length > 1000 ||
+            filePath.startsWith('/') || filePath.startsWith('\\') || /^[a-zA-Z]:/.test(filePath) ||
+            filePath.includes('\\') || filePath.split('/').some(part => part === '..' || part === '.') ||
+            /[\x00-\x1f]/.test(filePath)) {
             throw new Error('Manifests satur nederīgu faila ceļu.');
         }
-
-        if (!info || typeof info !== 'object') {
+        if (!info || typeof info !== 'object' || Array.isArray(info)) {
             throw new Error(`Manifesta ieraksts ${filePath} nav derīgs.`);
         }
-
-        const id = info.id || info.zipId;
-
+        const id = info.zipId || info.id;
         if (!validateArweaveId(id)) {
             throw new Error(`Manifesta ierakstam ${filePath} ir nederīgs ID.`);
         }
-
         if (typeof info.hash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(info.hash)) {
             throw new Error(`Manifesta ierakstam ${filePath} ir nederīgs SHA-256 hash.`);
         }
+        referencedZipIds.add(id);
     }
 
+    for (const zipId of referencedZipIds) {
+        const iv = encryption.ivs[zipId];
+        if (!Array.isArray(iv) || iv.length !== 12 ||
+            iv.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+            throw new Error(`Manifesta ZIP ${zipId} AES-GCM IV nav derīgs vai trūkst.`);
+        }
+    }
+
+    if (manifest.archive && typeof manifest.archive === 'object' &&
+        manifest.archive.id !== undefined && !validateArweaveId(manifest.archive.id)) {
+        throw new Error('Manifesta archive ID nav derīgs.');
+    }
     return true;
 }
 
@@ -2400,11 +2426,21 @@ app.post('/api/save-zip-tx', backupLimiter, async (req, res) => {
                     if (Number(job.cryptoVersion) !== 1) {
                         throw new Error('Šis ZIP izmanto veco testnet šifrēšanas formātu; izveido jaunu backup.');
                     }
-                    return res.json({
-                        success: true,
-                        idempotent: true,
-                        status: job.status
-                    });
+                    if (job.zipMerkleRoot && normalizedMerkleRoot &&
+                        job.zipMerkleRoot.toLowerCase() !== normalizedMerkleRoot.toLowerCase()) {
+                        throw new Error('Atkārtotajā ZIP saglabāšanā Merkle root nesakrīt.');
+                    }
+                    if (job.zipIv && normalizedIV && JSON.stringify(job.zipIv) !== JSON.stringify(normalizedIV)) {
+                        throw new Error('Atkārtotajā ZIP saglabāšanā IV nesakrīt.');
+                    }
+                    const missingZipMetadata = {};
+                    if (!job.zipIv && normalizedIV) missingZipMetadata.zipIv = normalizedIV;
+                    if (!job.zipMerkleRoot && normalizedMerkleRoot) missingZipMetadata.zipMerkleRoot = normalizedMerkleRoot;
+                    if (Object.keys(missingZipMetadata).length) {
+                        missingZipMetadata.updatedAt = Date.now();
+                        await updateJob(jobId, missingZipMetadata, JOB_TTL_SECONDS);
+                    }
+                    return res.json({ success: true, idempotent: true, status: job.status });
                 }
                 throw new Error(
                     `Nevar mainīt ZIP pēc statusa: ${job.status}.`
@@ -2727,6 +2763,13 @@ app.post('/api/start-blockchain-finalize', backupLimiter, async (req, res) => {
                 ...job,
                 walletAddress: wallet
             });
+
+            if (typeof job.zipMerkleRoot !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(job.zipMerkleRoot)) {
+                throw new Error('Nederīgs vai trūkstošs ZIP posmā saglabātais Merkle root.');
+            }
+            if (job.zipMerkleRoot.toLowerCase() !== merkleRoot.toLowerCase()) {
+                throw new Error('Iesniegtais Merkle root nesakrīt ar ZIP posmā saglabāto vērtību.');
+            }
 
             if (job.status !== 'manifest-uploaded') {
                 throw new Error(
